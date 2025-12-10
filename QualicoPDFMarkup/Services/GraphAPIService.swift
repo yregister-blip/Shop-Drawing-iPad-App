@@ -138,7 +138,7 @@ class GraphAPIService: ObservableObject {
         }
 
         guard let url = URL(string: urlString) else {
-            throw GraphAPIError.invalidResponse
+            throw GraphAPIError.invalidResponse(statusCode: 0, message: "Invalid folder URL")
         }
 
         var request = URLRequest(url: url)
@@ -146,12 +146,7 @@ class GraphAPIService: ObservableObject {
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
-
-            guard let httpResponse = response as? HTTPURLResponse,
-                  (200...299).contains(httpResponse.statusCode) else {
-                throw GraphAPIError.invalidResponse
-            }
-
+            try validateResponse(response)
             let result = try JSONDecoder().decode(DriveItemListResponse.self, from: data)
             return (result.value, result.nextLink)
         } catch let error as GraphAPIError {
@@ -197,12 +192,7 @@ class GraphAPIService: ObservableObject {
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
-
-            guard let httpResponse = response as? HTTPURLResponse,
-                  (200...299).contains(httpResponse.statusCode) else {
-                throw GraphAPIError.invalidResponse
-            }
-
+            try validateResponse(response)
             return data
         } catch let error as GraphAPIError {
             throw error
@@ -222,12 +212,7 @@ class GraphAPIService: ObservableObject {
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
-
-            guard let httpResponse = response as? HTTPURLResponse,
-                  (200...299).contains(httpResponse.statusCode) else {
-                throw GraphAPIError.invalidResponse
-            }
-
+            try validateResponse(response)
             let item = try JSONDecoder().decode(DriveItem.self, from: data)
             return item
         } catch let error as GraphAPIError {
@@ -254,9 +239,13 @@ class GraphAPIService: ObservableObject {
         do {
             let (_, response) = try await URLSession.shared.data(for: request)
 
-            guard let httpResponse = response as? HTTPURLResponse,
-                  (200...299).contains(httpResponse.statusCode) else {
-                throw GraphAPIError.uploadFailed
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw GraphAPIError.uploadFailed(statusCode: 0, message: "Invalid response type")
+            }
+
+            guard (200...299).contains(httpResponse.statusCode) else {
+                let message = try? extractErrorMessage(from: httpResponse)
+                throw GraphAPIError.uploadFailed(statusCode: httpResponse.statusCode, message: message)
             }
         } catch let error as GraphAPIError {
             throw error
@@ -305,10 +294,13 @@ class GraphAPIService: ObservableObject {
 
         do {
             let (responseData, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw GraphAPIError.uploadFailed(statusCode: 0, message: "Invalid response type")
+            }
 
-            guard let httpResponse = response as? HTTPURLResponse,
-                  (200...299).contains(httpResponse.statusCode) else {
-                throw GraphAPIError.uploadFailed
+            guard (200...299).contains(httpResponse.statusCode) else {
+                let message = try? extractErrorMessage(from: httpResponse)
+                throw GraphAPIError.uploadFailed(statusCode: httpResponse.statusCode, message: message)
             }
 
             let item = try JSONDecoder().decode(DriveItem.self, from: responseData)
