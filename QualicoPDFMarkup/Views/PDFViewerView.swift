@@ -181,6 +181,10 @@ class PDFViewerViewModel: ObservableObject {
                 data = try await service.downloadFile(itemId: currentFile.id)
             }
 
+            // Fetch fresh metadata to get current eTag for conflict detection
+            let metadata = try await service.getItemMetadata(itemId: currentFile.id)
+            originalETag = metadata.eTag
+
             if let document = PDFDocument(data: data) {
                 pdfDocument = document
                 hasUnsavedChanges = false
@@ -232,11 +236,38 @@ class PDFViewerViewModel: ObservableObject {
                 return
             }
 
-            // POC: Force overwrite (no eTag checking)
-            try await manager.forceSave(itemId: currentFile.id, pdfData: pdfData)
+            // Use eTag checking to detect concurrent edits
+            guard let eTag = originalETag,
+                  let folderId = folderContext?.folderId else {
+                // Fallback to force save if we don't have eTag or folderId
+                try await manager.forceSave(itemId: currentFile.id, pdfData: pdfData)
+                hasUnsavedChanges = false
+                saveResultMessage = "PDF saved successfully"
+                showSaveAlert = true
+                isSaving = false
+                return
+            }
+
+            let result = try await manager.saveWithETagCheck(
+                itemId: currentFile.id,
+                originalETag: eTag,
+                originalName: currentFile.name,
+                folderId: folderId,
+                pdfData: pdfData
+            )
 
             hasUnsavedChanges = false
-            saveResultMessage = "PDF saved successfully"
+
+            switch result {
+            case .overwritten:
+                // Update eTag after successful save
+                let metadata = try await service.getItemMetadata(itemId: currentFile.id)
+                originalETag = metadata.eTag
+                saveResultMessage = "PDF saved successfully"
+            case .savedAsCopy(let fileName):
+                saveResultMessage = "File was modified by another user. Your changes were saved as:\n\n\(fileName)"
+            }
+
             showSaveAlert = true
             isSaving = false
         } catch {

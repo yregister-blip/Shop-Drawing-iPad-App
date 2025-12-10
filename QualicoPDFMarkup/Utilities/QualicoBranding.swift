@@ -36,6 +36,8 @@ enum QualicoBranding {
     }
 
     static func stampTextAttributes() -> [NSAttributedString.Key: Any] {
+        // TODO: Confirm with marketing whether Qualico has a brand font requirement.
+        // Currently using system bold font as placeholder.
         return [
             .font: UIFont.boldSystemFont(ofSize: stampFontSize),
             .foregroundColor: qualicoRed

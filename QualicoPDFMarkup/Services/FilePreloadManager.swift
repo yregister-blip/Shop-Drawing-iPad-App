@@ -36,7 +36,6 @@ class FilePreloadManager {
                 }
             } catch {
                 // Preload failure is non-critical; file will load on demand
-                print("Preload failed for \(nextFile.name): \(error)")
             }
         }
     }
