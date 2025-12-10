@@ -17,6 +17,8 @@ class AuthManager: NSObject, ObservableObject {
 
     private var currentToken: TokenModel?
     private var authSession: ASWebAuthenticationSession?
+    private var refreshRetryCount = 0
+    private let maxRefreshRetries = 3
 
     override init() {
         super.init()
@@ -161,17 +163,51 @@ class AuthManager: NSObject, ObservableObject {
             .data(using: .utf8)
 
         do {
-            let (data, _) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            // Check for HTTP errors that indicate invalid grant (user must re-auth)
+            if let httpResponse = response as? HTTPURLResponse {
+                switch httpResponse.statusCode {
+                case 200...299:
+                    // Success - parse and save the token
+                    break
+                case 400, 401:
+                    // Invalid grant or unauthorized - refresh token is invalid/expired
+                    // User must re-authenticate
+                    isAuthenticated = false
+                    try? KeychainHelper.deleteToken()
+                    refreshRetryCount = 0
+                    return
+                default:
+                    // Other server errors - treat as transient, don't sign out
+                    throw URLError(.badServerResponse)
+                }
+            }
+
             let decoder = JSONDecoder()
             let token = try decoder.decode(TokenModel.self, from: data)
 
             try KeychainHelper.saveToken(token)
             currentToken = token
             isAuthenticated = true
+            refreshRetryCount = 0 // Reset on success
         } catch {
-            // Refresh failed, user needs to sign in again
-            isAuthenticated = false
-            try? KeychainHelper.deleteToken()
+            // Network error or transient failure
+            // Don't sign out if the access token is still valid (not expired)
+            refreshRetryCount += 1
+
+            if let token = currentToken, !token.isExpired {
+                // Access token still valid - keep user logged in
+                // They can continue working; we'll retry refresh later
+                isAuthenticated = true
+            } else if refreshRetryCount >= maxRefreshRetries {
+                // Token is expired AND we've exhausted retries - must sign out
+                isAuthenticated = false
+                try? KeychainHelper.deleteToken()
+                refreshRetryCount = 0
+            }
+            // If token is expired but retries remain, keep isAuthenticated as-is
+            // to allow retry on next getAccessToken() call
         }
     }
 
