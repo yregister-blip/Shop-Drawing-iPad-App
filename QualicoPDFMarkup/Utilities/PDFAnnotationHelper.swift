@@ -10,7 +10,7 @@ import PDFKit
 import UIKit
 
 enum PDFAnnotationHelper {
-    static let defaultStampSize = CGSize(width: 150, height: 50)
+    static let defaultStampSize = QualicoBranding.stampSize
 
     static func addStamp(
         to page: PDFPage,
@@ -51,23 +51,20 @@ enum PDFAnnotationHelper {
     static func createStampImage(type: StampType) -> UIImage? {
         // For POC, create a simple text-based stamp
         // In production, would load from Resources/Stamps/
-        let size = defaultStampSize
+        let size = QualicoBranding.stampSize
         let renderer = UIGraphicsImageRenderer(size: size)
 
         let image = renderer.image { context in
-            // Draw red border
-            UIColor.red.setStroke()
+            // Draw Qualico Red border
+            QualicoBranding.stampColor().setStroke()
             let rect = CGRect(origin: .zero, size: size).insetBy(dx: 2, dy: 2)
             let path = UIBezierPath(rect: rect)
-            path.lineWidth = 3
+            path.lineWidth = QualicoBranding.stampBorderWidth
             path.stroke()
 
-            // Draw text
+            // Draw text with Qualico branding
             let text = type.rawValue
-            let attributes: [NSAttributedString.Key: Any] = [
-                .font: UIFont.boldSystemFont(ofSize: 20),
-                .foregroundColor: UIColor.red
-            ]
+            let attributes = QualicoBranding.stampTextAttributes()
 
             let textSize = (text as NSString).size(withAttributes: attributes)
             let textRect = CGRect(
