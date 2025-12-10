@@ -34,15 +34,14 @@ class SyncManager {
         folderId: String,
         pdfData: Data
     ) async throws -> SaveResult {
-        // Check current version
-        let currentMeta = try await graphService.getItemMetadata(itemId: itemId)
-
-        if currentMeta.eTag == originalETag {
-            // Safe to overwrite
+        do {
+            // Optimistic approach: Try to upload with eTag check
+            // This is more efficient than fetching metadata first
             try await graphService.uploadFileWithETag(itemId: itemId, data: pdfData, eTag: originalETag)
             return .overwritten
-        } else {
-            // Conflict - save as copy with device name
+        } catch GraphAPIError.conflict {
+            // eTag mismatch (412) - file was modified by someone else
+            // Save as copy with device name
             let deviceName = UIDevice.current.name
             let timestamp = Self.fileSafeTimestamp()
             let baseName = originalName.replacingOccurrences(of: ".pdf", with: "", options: .caseInsensitive)

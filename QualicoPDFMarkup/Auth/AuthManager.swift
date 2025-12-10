@@ -199,6 +199,13 @@ class AuthManager: NSObject, ObservableObject {
 
 extension AuthManager: ASWebAuthenticationPresentationContextProviding {
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        return ASPresentationAnchor()
+        // Get the active window from the connected scenes (required for iPad, especially with Stage Manager)
+        guard let windowScene = UIApplication.shared.connectedScenes
+            .first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene,
+              let window = windowScene.windows.first(where: { $0.isKeyWindow }) ?? windowScene.windows.first else {
+            // Fallback to any available window
+            return UIApplication.shared.windows.first ?? ASPresentationAnchor()
+        }
+        return window
     }
 }
