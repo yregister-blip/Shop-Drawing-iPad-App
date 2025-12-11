@@ -2,7 +2,7 @@
 //  PDFViewerView.swift
 //  QualicoPDFMarkup
 //
-//  PDF viewer with tap-to-stamp and in-viewer navigation
+//  Full-screen PDF viewer with tap-to-stamp and slide-out file browser
 //
 
 import SwiftUI
@@ -14,19 +14,50 @@ struct PDFViewerView: View {
     @EnvironmentObject var authManager: AuthManager
     @StateObject private var viewModel: PDFViewerViewModel
 
+    @State private var showFileList = false
+    @State private var showSettingsMenu = false
+    @State private var edgeSwipeOffset: CGFloat = 0
+
+    private let edgeSwipeThreshold: CGFloat = 50
+
     init(file: DriveItem, folderContext: FolderContext?) {
         _viewModel = StateObject(wrappedValue: PDFViewerViewModel(file: file, folderContext: folderContext))
     }
 
     var body: some View {
-        NavigationView {
+        ZStack {
+            // Main content
             VStack(spacing: 0) {
+                // Top toolbar
+                PDFTopToolbarView(
+                    filename: viewModel.currentFile.name,
+                    positionDisplay: viewModel.positionDisplay,
+                    onMenuTapped: {
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            showFileList = true
+                        }
+                    },
+                    onSettingsTapped: {
+                        showSettingsMenu = true
+                    },
+                    onSaveTapped: {
+                        Task {
+                            await viewModel.save()
+                        }
+                    },
+                    hasUnsavedChanges: viewModel.hasUnsavedChanges,
+                    isSaving: viewModel.isSaving
+                )
+
+                // PDF content area
                 if viewModel.isLoading {
                     VStack {
                         Spacer()
                         ProgressView("Loading PDF...")
                         Spacer()
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color(UIColor.systemGroupedBackground))
                 } else if let errorMessage = viewModel.errorMessage {
                     VStack(spacing: 20) {
                         Image(systemName: "exclamationmark.triangle")
@@ -39,8 +70,11 @@ struct PDFViewerView: View {
                                 await viewModel.loadPDF()
                             }
                         }
+                        .buttonStyle(.borderedProminent)
                     }
                     .padding()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color(UIColor.systemGroupedBackground))
                 } else if let pdfDocument = viewModel.pdfDocument {
                     PDFKitView(
                         document: pdfDocument,
@@ -48,45 +82,80 @@ struct PDFViewerView: View {
                             viewModel.handleStampTap(at: point, in: pdfView)
                         }
                     )
-
-                    // Toolbar
-                    StampToolbarView(viewModel: viewModel)
-                }
-            }
-            .navigationTitle(viewModel.currentFile.name)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Close") {
-                        dismiss()
-                    }
                 }
 
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    if viewModel.isSaving {
-                        ProgressView()
-                    } else if viewModel.hasUnsavedChanges {
-                        Button("Save") {
-                            Task {
-                                await viewModel.save()
-                            }
-                        }
+                // Bottom toolbar
+                StampToolbarView(viewModel: viewModel)
+            }
+
+            // Edge swipe indicator (visual feedback when swiping from left edge)
+            if edgeSwipeOffset > 0 {
+                HStack {
+                    Rectangle()
+                        .fill(Color.blue.opacity(0.3))
+                        .frame(width: min(edgeSwipeOffset, 60))
+                        .overlay(
+                            Image(systemName: "chevron.right")
+                                .foregroundColor(.blue)
+                                .opacity(edgeSwipeOffset > 30 ? 1 : 0)
+                        )
+                    Spacer()
+                }
+                .ignoresSafeArea()
+            }
+
+            // Slide-out file list overlay
+            SlideOutFileListView(
+                isShowing: $showFileList,
+                files: viewModel.folderFiles,
+                currentFileId: viewModel.currentFile.id,
+                onFileSelected: { file in
+                    Task {
+                        await viewModel.navigateToFile(file)
                     }
                 }
-            }
-            .alert("Save Result", isPresented: $viewModel.showSaveAlert) {
-                Button("OK") {
-                    viewModel.showSaveAlert = false
-                }
-            } message: {
-                Text(viewModel.saveResultMessage)
+            )
+        }
+        .navigationBarHidden(true)
+        .ignoresSafeArea(.keyboard)
+        .gesture(edgeSwipeGesture)
+        .confirmationDialog("Settings", isPresented: $showSettingsMenu, titleVisibility: .hidden) {
+            Button("Close Viewer") {
+                dismiss()
             }
         }
-        .navigationViewStyle(.stack)
+        .alert("Save Result", isPresented: $viewModel.showSaveAlert) {
+            Button("OK") {
+                viewModel.showSaveAlert = false
+            }
+        } message: {
+            Text(viewModel.saveResultMessage)
+        }
         .task {
             viewModel.setGraphService(authManager: authManager)
             await viewModel.loadPDF()
         }
+    }
+
+    // Edge swipe gesture to open file list
+    private var edgeSwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 10)
+            .onChanged { value in
+                // Only respond to swipes starting from the left edge
+                if value.startLocation.x < 30 && value.translation.width > 0 {
+                    edgeSwipeOffset = value.translation.width
+                }
+            }
+            .onEnded { value in
+                if value.startLocation.x < 30 && value.translation.width > edgeSwipeThreshold {
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        showFileList = true
+                    }
+                }
+                withAnimation(.easeOut(duration: 0.15)) {
+                    edgeSwipeOffset = 0
+                }
+            }
     }
 }
 
@@ -165,6 +234,11 @@ class PDFViewerViewModel: ObservableObject {
             syncManager = SyncManager(graphService: service)
             preloadManager = FilePreloadManager(graphService: service)
         }
+    }
+
+    // Expose files for slide-out panel
+    var folderFiles: [DriveItem] {
+        folderContext?.files ?? []
     }
 
     func loadPDF() async {
@@ -299,6 +373,19 @@ class PDFViewerViewModel: ObservableObject {
             hasUnsavedChanges = false
             await loadPDF()
         }
+    }
+
+    // Navigate to specific file from slide-out panel
+    func navigateToFile(_ file: DriveItem) async {
+        guard var context = folderContext,
+              let index = context.files.firstIndex(where: { $0.id == file.id }) else { return }
+
+        context.currentIndex = index
+        folderContext = context
+        currentFile = file
+        originalETag = file.eTag
+        hasUnsavedChanges = false
+        await loadPDF()
     }
 
     var canNavigateNext: Bool {

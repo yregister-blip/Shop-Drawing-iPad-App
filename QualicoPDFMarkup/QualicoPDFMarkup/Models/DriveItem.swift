@@ -7,7 +7,7 @@
 
 import Foundation
 
-struct DriveItem: Identifiable, Codable {
+struct DriveItem: Identifiable, Codable, Hashable {
     let id: String
     let name: String
     let size: Int?
@@ -29,25 +29,34 @@ struct DriveItem: Identifiable, Codable {
     // Local UI state (not persisted to OneDrive)
     var localStatus: LocalStatus = .none
 
-    enum LocalStatus {
+    enum LocalStatus: Hashable {
         case none
         case stamped
         case uploading
         case conflict
     }
 
-    struct FolderFacet: Codable {
+    struct FolderFacet: Codable, Hashable {
         let childCount: Int?
     }
 
-    struct FileFacet: Codable {
+    struct FileFacet: Codable, Hashable {
         let mimeType: String?
         let hashes: Hashes?
     }
 
-    struct Hashes: Codable {
+    struct Hashes: Codable, Hashable {
         let quickXorHash: String?
         let sha1Hash: String?
+    }
+
+    // Custom Hashable implementation (hash only by id for identity)
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
+
+    static func == (lhs: DriveItem, rhs: DriveItem) -> Bool {
+        lhs.id == rhs.id
     }
 
     enum CodingKeys: String, CodingKey {

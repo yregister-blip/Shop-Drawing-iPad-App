@@ -2,7 +2,7 @@
 //  StampToolbarView.swift
 //  QualicoPDFMarkup
 //
-//  Toolbar for stamping and navigation controls
+//  Bottom toolbar for navigation, stamping indicator, and save status
 //
 
 import SwiftUI
@@ -15,73 +15,92 @@ struct StampToolbarView: View {
             Divider()
 
             HStack {
-                // Navigation controls
+                // Left: Previous button
                 Button(action: {
                     Task {
                         await viewModel.navigateToPrevious()
                     }
                 }) {
-                    Image(systemName: "chevron.left")
-                        .font(.title2)
-                        .frame(width: 44, height: 44)
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.left")
+                            .font(.body.weight(.semibold))
+                        Text("Previous")
+                            .font(.subheadline)
+                    }
+                    .foregroundColor(viewModel.canNavigatePrevious ? .blue : .secondary)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(Color(UIColor.secondarySystemBackground))
+                    .cornerRadius(8)
                 }
                 .disabled(!viewModel.canNavigatePrevious)
 
-                Text(viewModel.positionDisplay)
-                    .font(.subheadline)
-                    .monospacedDigit()
-                    .frame(minWidth: 80)
-                    .foregroundColor(.secondary)
-
-                Button(action: {
-                    Task {
-                        await viewModel.navigateToNext()
-                    }
-                }) {
-                    Image(systemName: "chevron.right")
-                        .font(.title2)
-                        .frame(width: 44, height: 44)
-                }
-                .disabled(!viewModel.canNavigateNext)
-
                 Spacer()
 
-                // Stamp indicator
-                VStack(spacing: 2) {
+                // Center: Tap to Stamp indicator
+                VStack(spacing: 4) {
                     Image(systemName: "hand.tap.fill")
                         .font(.title2)
                         .foregroundColor(.blue)
                     Text("Tap to Stamp")
-                        .font(.caption2)
+                        .font(.caption)
                         .foregroundColor(.secondary)
                 }
+                .frame(minWidth: 100)
 
                 Spacer()
 
-                // Save indicator
-                if viewModel.hasUnsavedChanges {
-                    VStack(spacing: 2) {
-                        Image(systemName: "circle.fill")
-                            .font(.caption)
-                            .foregroundColor(.orange)
-                        Text("Unsaved")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
+                // Right: Next button and save indicator
+                HStack(spacing: 16) {
+                    Button(action: {
+                        Task {
+                            await viewModel.navigateToNext()
+                        }
+                    }) {
+                        HStack(spacing: 4) {
+                            Text("Next")
+                                .font(.subheadline)
+                            Image(systemName: "chevron.right")
+                                .font(.body.weight(.semibold))
+                        }
+                        .foregroundColor(viewModel.canNavigateNext ? .blue : .secondary)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(Color(UIColor.secondarySystemBackground))
+                        .cornerRadius(8)
                     }
-                } else {
-                    VStack(spacing: 2) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.title3)
-                            .foregroundColor(.green)
-                        Text("Saved")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
+                    .disabled(!viewModel.canNavigateNext)
+
+                    // Save status indicator
+                    saveStatusIndicator
                 }
             }
-            .padding(.horizontal)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
             .background(Color(UIColor.systemBackground))
+        }
+    }
+
+    @ViewBuilder
+    private var saveStatusIndicator: some View {
+        if viewModel.hasUnsavedChanges {
+            HStack(spacing: 4) {
+                Image(systemName: "circle.fill")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+                Text("Unsaved")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        } else {
+            HStack(spacing: 4) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.body)
+                    .foregroundColor(.green)
+                Text("Saved")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
         }
     }
 }

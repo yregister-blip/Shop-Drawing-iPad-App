@@ -7,10 +7,19 @@
 
 import Foundation
 
-struct FolderContext {
+struct FolderContext: Hashable {
     let folderId: String
     let files: [DriveItem]
     var currentIndex: Int
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(folderId)
+        hasher.combine(currentIndex)
+    }
+
+    static func == (lhs: FolderContext, rhs: FolderContext) -> Bool {
+        lhs.folderId == rhs.folderId && lhs.currentIndex == rhs.currentIndex
+    }
 
     var currentFile: DriveItem {
         files[currentIndex]
