@@ -8,7 +8,7 @@
 import Foundation
 import CoreGraphics
 
-enum StampType: String, Codable {
+enum StampType: String, Codable, CaseIterable, Hashable {
     case fabricated = "FABRICATED"
     case hold = "HOLD"
     case fitOnly = "FIT ONLY"
