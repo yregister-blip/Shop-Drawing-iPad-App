@@ -84,12 +84,9 @@ enum PDFAnnotationHelper {
 // Custom annotation class to properly handle image stamps
 class ImageStampAnnotation: PDFAnnotation {
     private let stampImage: UIImage
-    private let pdfFlippedImage: UIImage
 
     init(bounds: CGRect, image: UIImage) {
         self.stampImage = image
-        // Pre-flip the image for PDF coordinate system (PDF uses bottom-left origin)
-        self.pdfFlippedImage = Self.createPDFFlippedImage(from: image) ?? image
         super.init(bounds: bounds, forType: .stamp, withProperties: nil)
     }
 
@@ -97,54 +94,20 @@ class ImageStampAnnotation: PDFAnnotation {
         fatalError("init(coder:) has not been implemented")
     }
 
-    /// Creates a flipped version of the image for PDF coordinate system
-    /// PDF uses bottom-left origin with Y increasing upward, while UIKit uses top-left origin
-    /// The image needs both vertical and horizontal flip to display correctly in PDF annotations
-    private static func createPDFFlippedImage(from image: UIImage) -> UIImage? {
-        guard let cgImage = image.cgImage else { return nil }
-
-        let width = cgImage.width
-        let height = cgImage.height
-
-        // Create a bitmap context with the same dimensions
-        guard let colorSpace = cgImage.colorSpace,
-              let context = CGContext(
-                data: nil,
-                width: width,
-                height: height,
-                bitsPerComponent: cgImage.bitsPerComponent,
-                bytesPerRow: 0,
-                space: colorSpace,
-                bitmapInfo: cgImage.bitmapInfo.rawValue
-              ) else {
-            return nil
-        }
-
-        // Apply both horizontal and vertical flip transform for correct PDF rendering
-        // This corrects for both the Y-axis inversion and the horizontal mirroring
-        context.translateBy(x: CGFloat(width), y: CGFloat(height))
-        context.scaleBy(x: -1.0, y: -1.0)
-
-        // Draw the original image in the transformed context
-        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
-
-        // Create the flipped image
-        guard let flippedCGImage = context.makeImage() else { return nil }
-        return UIImage(cgImage: flippedCGImage, scale: image.scale, orientation: .up)
-    }
-
     override func draw(with box: PDFDisplayBox, in context: CGContext) {
         // Don't call super - we handle all drawing ourselves
-        // super.draw would try to draw the default stamp appearance
 
-        // Save the current graphics state
-        UIGraphicsPushContext(context)
+        guard let cgImage = stampImage.cgImage else { return }
 
-        // Use UIImage's draw method which handles coordinate system transformations
-        // This automatically accounts for the difference between PDF (bottom-left origin)
-        // and UIKit (top-left origin) coordinate systems
-        stampImage.draw(in: bounds)
-
-        UIGraphicsPopContext()
+        // IMPORTANT: Draw CGImage directly without any transforms.
+        //
+        // Why this works (and why other approaches fail):
+        // - CGContext.draw() with CGImage draws correctly in PDF coordinate space
+        // - UIImage.draw(in:) applies UIKit coordinate transforms that cause horizontal mirroring
+        // - Manual transforms (scaleBy, translateBy) cause various flip/mirror issues
+        //
+        // The CGImage from UIGraphicsImageRenderer is already in the correct orientation.
+        // Just draw it directly at the annotation bounds - no transforms needed.
+        context.draw(cgImage, in: bounds)
     }
 }
