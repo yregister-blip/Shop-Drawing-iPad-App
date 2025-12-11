@@ -10,7 +10,7 @@ import PDFKit
 import UIKit
 
 @MainActor
-class PDFThumbnailService: ObservableObject {
+class PDFThumbnailService {
     static let shared = PDFThumbnailService()
 
     private var thumbnailCache: [String: UIImage] = [:]
