@@ -8,9 +8,9 @@
 import Foundation
 
 enum AuthConfig {
-    // TODO: Replace with actual values from Azure Portal
-    static let clientID = "YOUR_CLIENT_ID"
-    static let tenantID = "YOUR_TENANT_ID"
+    // Azure AD App Registration: Qualico PDF Markup
+    static let clientID = "fcddb861-056c-45ad-9052-4aa85a1d4280"
+    static let tenantID = "c9465630-fe20-4327-a705-1f7433e709cb"
     static let redirectURI = "msauth.com.qualico.pdfmarkup://auth"
     static let scopes = ["Files.ReadWrite", "User.Read", "offline_access"]
 
