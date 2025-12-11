@@ -109,9 +109,23 @@ class ImageStampAnnotation: PDFAnnotation {
     override func draw(with box: PDFDisplayBox, in context: CGContext) {
         super.draw(with: box, in: context)
 
-        // Draw the stamp image
-        UIGraphicsPushContext(context)
-        stampImage.draw(in: self.bounds)
-        UIGraphicsPopContext()
+        // Draw the stamp image with proper coordinate transformation
+        // PDF uses bottom-left origin with y increasing upward
+        // UIKit uses top-left origin with y increasing downward
+        // We need to flip the context to draw the image correctly
+
+        context.saveGState()
+
+        // Move to the top of the bounds and flip vertically
+        context.translateBy(x: bounds.origin.x, y: bounds.origin.y + bounds.height)
+        context.scaleBy(x: 1.0, y: -1.0)
+
+        // Draw the image in the transformed coordinate space
+        if let cgImage = stampImage.cgImage {
+            let drawRect = CGRect(origin: .zero, size: bounds.size)
+            context.draw(cgImage, in: drawRect)
+        }
+
+        context.restoreGState()
     }
 }

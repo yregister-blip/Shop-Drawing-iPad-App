@@ -15,7 +15,6 @@ struct PDFViewerView: View {
     @StateObject private var viewModel: PDFViewerViewModel
 
     @State private var showFileList = false
-    @State private var showSettingsMenu = false
     @State private var edgeSwipeOffset: CGFloat = 0
 
     private let edgeSwipeThreshold: CGFloat = 50
@@ -28,25 +27,39 @@ struct PDFViewerView: View {
         ZStack {
             // Main content
             VStack(spacing: 0) {
-                // Top toolbar
+                // Top toolbar with all controls
                 PDFTopToolbarView(
                     filename: viewModel.currentFile.name,
                     positionDisplay: viewModel.positionDisplay,
+                    canNavigatePrevious: viewModel.canNavigatePrevious,
+                    canNavigateNext: viewModel.canNavigateNext,
+                    onPreviousTapped: {
+                        Task {
+                            await viewModel.navigateToPrevious()
+                        }
+                    },
+                    onNextTapped: {
+                        Task {
+                            await viewModel.navigateToNext()
+                        }
+                    },
                     onMenuTapped: {
                         withAnimation(.easeInOut(duration: 0.25)) {
                             showFileList = true
                         }
                     },
-                    onSettingsTapped: {
-                        showSettingsMenu = true
-                    },
+                    isStampModeEnabled: $viewModel.isStampModeEnabled,
+                    selectedStampType: $viewModel.selectedStampType,
                     onSaveTapped: {
                         Task {
                             await viewModel.save()
                         }
                     },
                     hasUnsavedChanges: viewModel.hasUnsavedChanges,
-                    isSaving: viewModel.isSaving
+                    isSaving: viewModel.isSaving,
+                    onCloseTapped: {
+                        dismiss()
+                    }
                 )
 
                 // PDF content area
@@ -83,9 +96,6 @@ struct PDFViewerView: View {
                         }
                     )
                 }
-
-                // Bottom toolbar
-                StampToolbarView(viewModel: viewModel)
             }
 
             // Edge swipe indicator (visual feedback when swiping from left edge)
@@ -115,15 +125,21 @@ struct PDFViewerView: View {
                     }
                 }
             )
+
+            // Stamp mode indicator (floating at bottom)
+            if viewModel.isStampModeEnabled {
+                VStack {
+                    Spacer()
+                    StampModeIndicator(stampType: viewModel.selectedStampType)
+                        .padding(.bottom, 30)
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .animation(.easeInOut(duration: 0.2), value: viewModel.isStampModeEnabled)
+            }
         }
         .navigationBarHidden(true)
         .ignoresSafeArea(.keyboard)
         .gesture(edgeSwipeGesture)
-        .confirmationDialog("Settings", isPresented: $showSettingsMenu, titleVisibility: .hidden) {
-            Button("Close Viewer") {
-                dismiss()
-            }
-        }
         .alert("Save Result", isPresented: $viewModel.showSaveAlert) {
             Button("OK") {
                 viewModel.showSaveAlert = false
@@ -215,6 +231,10 @@ class PDFViewerViewModel: ObservableObject {
     @Published var showSaveAlert = false
     @Published var saveResultMessage = ""
 
+    // Stamp mode controls
+    @Published var isStampModeEnabled = false
+    @Published var selectedStampType: StampType = .fabricated
+
     private var folderContext: FolderContext?
     private var graphService: GraphAPIService?
     private var syncManager: SyncManager?
@@ -280,13 +300,15 @@ class PDFViewerViewModel: ObservableObject {
     }
 
     func handleStampTap(at screenPoint: CGPoint, in pdfView: PDFView) {
+        // Only place stamps when stamp mode is enabled
+        guard isStampModeEnabled else { return }
         guard let page = pdfView.page(for: screenPoint, nearest: true) else { return }
 
         let success = PDFAnnotationHelper.addStamp(
             to: page,
             at: screenPoint,
             in: pdfView,
-            stampType: .fabricated
+            stampType: selectedStampType
         )
 
         if success {
@@ -294,6 +316,10 @@ class PDFViewerViewModel: ObservableObject {
             // Immediate UI feedback
             currentFile.localStatus = .stamped
         }
+    }
+
+    func toggleStampMode() {
+        isStampModeEnabled.toggle()
     }
 
     func save() async {
