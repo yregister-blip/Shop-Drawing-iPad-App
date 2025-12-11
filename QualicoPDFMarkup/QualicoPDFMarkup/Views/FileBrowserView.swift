@@ -41,7 +41,7 @@ struct FileBrowserView: View {
                 } else {
                     List {
                         ForEach(viewModel.items) { item in
-                            FileRowView(item: item) {
+                            FileRowView(item: item, graphService: viewModel.graphService) {
                                 if item.isFolder {
                                     Task {
                                         await viewModel.navigateToFolder(item)
@@ -140,15 +140,18 @@ struct PDFNavigationItem: Hashable {
 
 struct FileRowView: View {
     let item: DriveItem
+    let graphService: GraphAPIService?
     let onTap: () -> Void
+
+    @State private var thumbnail: UIImage?
+    @State private var isLoadingThumbnail = false
 
     var body: some View {
         Button(action: onTap) {
             HStack {
-                Image(systemName: iconName)
-                    .font(.title2)
-                    .foregroundColor(iconColor)
-                    .frame(width: 40)
+                // Thumbnail or icon
+                thumbnailView
+                    .frame(width: 44, height: 56)
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(item.name)
@@ -176,26 +179,61 @@ struct FileRowView: View {
             .padding(.vertical, 4)
         }
         .buttonStyle(.plain)
-    }
-
-    private var iconName: String {
-        if item.isFolder {
-            return "folder.fill"
-        } else if item.isPDF {
-            return "doc.text.fill"
-        } else {
-            return "doc.fill"
+        .task {
+            await loadThumbnailIfNeeded()
         }
     }
 
-    private var iconColor: Color {
+    @ViewBuilder
+    private var thumbnailView: some View {
         if item.isFolder {
-            return .blue
+            // Folder icon
+            Image(systemName: "folder.fill")
+                .font(.system(size: 32))
+                .foregroundColor(.blue)
+        } else if let thumbnail = thumbnail {
+            // PDF thumbnail
+            Image(uiImage: thumbnail)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .cornerRadius(4)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                )
+        } else if item.isPDF && isLoadingThumbnail {
+            // Loading placeholder
+            RoundedRectangle(cornerRadius: 4)
+                .fill(Color.gray.opacity(0.1))
+                .overlay(
+                    ProgressView()
+                        .scaleEffect(0.6)
+                )
         } else if item.isPDF {
-            return .red
+            // PDF icon fallback
+            Image(systemName: "doc.text.fill")
+                .font(.system(size: 32))
+                .foregroundColor(.red)
         } else {
-            return .gray
+            // Generic file icon
+            Image(systemName: "doc.fill")
+                .font(.system(size: 32))
+                .foregroundColor(.gray)
         }
+    }
+
+    private func loadThumbnailIfNeeded() async {
+        guard item.isPDF, thumbnail == nil, let graphService = graphService else { return }
+
+        // Check cache first
+        if let cached = PDFThumbnailService.shared.getCachedThumbnail(for: item.id) {
+            thumbnail = cached
+            return
+        }
+
+        isLoadingThumbnail = true
+        thumbnail = await PDFThumbnailService.shared.loadThumbnail(for: item, using: graphService)
+        isLoadingThumbnail = false
     }
 
     private func formatFileSize(_ bytes: Int) -> String {
@@ -213,7 +251,7 @@ class FileBrowserViewModel: ObservableObject {
     @Published var currentFolderName = "OneDrive"
     @Published var loadingMessage = "Loading..."
 
-    private var graphService: GraphAPIService?
+    private(set) var graphService: GraphAPIService?
     private var navigationStack: [(id: String, name: String)] = []
     private var currentFolderId: String?
 

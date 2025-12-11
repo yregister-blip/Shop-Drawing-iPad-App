@@ -97,8 +97,9 @@ class ImageStampAnnotation: PDFAnnotation {
         fatalError("init(coder:) has not been implemented")
     }
 
-    /// Creates a vertically flipped version of the image for PDF coordinate system
+    /// Creates a flipped version of the image for PDF coordinate system
     /// PDF uses bottom-left origin with Y increasing upward, while UIKit uses top-left origin
+    /// The image needs both vertical and horizontal flip to display correctly in PDF annotations
     private static func createPDFFlippedImage(from image: UIImage) -> UIImage? {
         guard let cgImage = image.cgImage else { return nil }
 
@@ -119,9 +120,10 @@ class ImageStampAnnotation: PDFAnnotation {
             return nil
         }
 
-        // Apply vertical flip transform: scale Y by -1 and translate
-        context.translateBy(x: 0, y: CGFloat(height))
-        context.scaleBy(x: 1.0, y: -1.0)
+        // Apply both horizontal and vertical flip transform for correct PDF rendering
+        // This corrects for both the Y-axis inversion and the horizontal mirroring
+        context.translateBy(x: CGFloat(width), y: CGFloat(height))
+        context.scaleBy(x: -1.0, y: -1.0)
 
         // Draw the original image in the transformed context
         context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))

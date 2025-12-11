@@ -29,9 +29,6 @@ struct PDFTopToolbarView: View {
     let hasUnsavedChanges: Bool
     let isSaving: Bool
 
-    // More menu
-    let onCloseTapped: () -> Void
-
     @State private var showStampPicker = false
 
     var body: some View {
@@ -204,13 +201,6 @@ struct PDFTopToolbarView: View {
                 .disabled(true)
             } label: {
                 Label("Annotations", systemImage: "pencil.and.outline")
-            }
-
-            Divider()
-
-            // Close Viewer
-            Button(role: .destructive, action: onCloseTapped) {
-                Label("Close Viewer", systemImage: "xmark.circle")
             }
         } label: {
             Image(systemName: "ellipsis.circle")
