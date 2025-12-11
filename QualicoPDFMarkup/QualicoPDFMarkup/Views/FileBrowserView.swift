@@ -12,12 +12,18 @@ struct FileBrowserView: View {
     @EnvironmentObject var authManager: AuthManager
     @StateObject private var viewModel = FileBrowserViewModel()
     @State private var navigationPath = NavigationPath()
+    @State private var showSignOutConfirmation = false
 
     var body: some View {
         NavigationStack(path: $navigationPath) {
             Group {
                 if viewModel.isLoading && viewModel.items.isEmpty {
-                    ProgressView("Loading...")
+                    VStack(spacing: 12) {
+                        ProgressView()
+                        Text(viewModel.loadingMessage)
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
                 } else if let error = viewModel.errorMessage {
                     VStack(spacing: 20) {
                         Image(systemName: "exclamationmark.triangle")
@@ -45,19 +51,6 @@ struct FileBrowserView: View {
                                     if let context = viewModel.createFolderContext(for: item) {
                                         navigationPath.append(PDFNavigationItem(file: item, context: context))
                                     }
-                                }
-                            }
-                        }
-
-                        if viewModel.hasMorePages {
-                            HStack {
-                                Spacer()
-                                ProgressView()
-                                Spacer()
-                            }
-                            .onAppear {
-                                Task {
-                                    await viewModel.loadNextPage()
                                 }
                             }
                         }
@@ -93,10 +86,15 @@ struct FileBrowserView: View {
                             Label("Refresh", systemImage: "arrow.clockwise")
                         }
 
-                        Button(action: {
-                            authManager.signOut()
-                        }) {
-                            Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
+                        // Sign Out is hidden in Account submenu to prevent accidental sign-outs
+                        Menu {
+                            Button(role: .destructive, action: {
+                                showSignOutConfirmation = true
+                            }) {
+                                Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
+                            }
+                        } label: {
+                            Label("Account", systemImage: "person.circle")
                         }
                     } label: {
                         Image(systemName: "ellipsis.circle")
@@ -114,6 +112,14 @@ struct FileBrowserView: View {
         .task {
             viewModel.setGraphService(authManager: authManager)
             await viewModel.loadRootFolder()
+        }
+        .alert("Sign Out", isPresented: $showSignOutConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Sign Out", role: .destructive) {
+                authManager.signOut()
+            }
+        } message: {
+            Text("Are you sure you want to sign out? You will need to sign in again to access files.")
         }
     }
 }
@@ -205,12 +211,11 @@ class FileBrowserViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var currentFolderName = "OneDrive"
-    @Published var hasMorePages = false
+    @Published var loadingMessage = "Loading..."
 
     private var graphService: GraphAPIService?
     private var navigationStack: [(id: String, name: String)] = []
     private var currentFolderId: String?
-    private var nextLink: String?
 
     func setGraphService(authManager: AuthManager) {
         if graphService == nil {
@@ -227,6 +232,7 @@ class FileBrowserViewModel: ObservableObject {
 
         isLoading = true
         errorMessage = nil
+        loadingMessage = "Loading..."
 
         do {
             let root = try await service.getRootFolder()
@@ -245,32 +251,31 @@ class FileBrowserViewModel: ObservableObject {
         isLoading = true
         errorMessage = nil
         items = []
-        nextLink = nil
+        loadingMessage = "Loading files..."
 
         do {
-            let (fetchedItems, link) = try await service.listFolder(folderId: folderId)
-            items = fetchedItems.naturallySorted()
-            nextLink = link
-            hasMorePages = link != nil
+            // Load ALL files from ALL pages before sorting
+            // This ensures proper natural sorting and Prev/Next navigation for 50+ file folders
+            var allItems: [DriveItem] = []
+            var pageCount = 0
+            var nextLink: String? = nil
+
+            repeat {
+                pageCount += 1
+                loadingMessage = pageCount == 1 ? "Loading files..." : "Loading files (page \(pageCount))..."
+
+                let skipToken = extractSkipToken(from: nextLink)
+                let (fetchedItems, link) = try await service.listFolder(folderId: folderId, skipToken: skipToken)
+                allItems.append(contentsOf: fetchedItems)
+                nextLink = link
+            } while nextLink != nil
+
+            // Now sort the complete list of all files
+            items = allItems.naturallySorted()
             isLoading = false
         } catch {
             errorMessage = "Failed to load folder: \(error.localizedDescription)"
             isLoading = false
-        }
-    }
-
-    func loadNextPage() async {
-        guard let service = graphService, let folderId = currentFolderId, hasMorePages else { return }
-
-        do {
-            let skipToken = extractSkipToken(from: nextLink)
-            let (fetchedItems, link) = try await service.listFolder(folderId: folderId, skipToken: skipToken)
-            items.append(contentsOf: fetchedItems)
-            items = items.naturallySorted()
-            nextLink = link
-            hasMorePages = link != nil
-        } catch {
-            errorMessage = "Failed to load more files: \(error.localizedDescription)"
         }
     }
 
@@ -297,6 +302,7 @@ class FileBrowserViewModel: ObservableObject {
     func createFolderContext(for file: DriveItem) -> FolderContext? {
         guard let folderId = currentFolderId else { return nil }
 
+        // Use all loaded PDF files - they're now all loaded and properly sorted
         let pdfFiles = items.filter { $0.isPDF }
         return FolderContext(folderId: folderId, files: pdfFiles, currentFileId: file.id)
     }
