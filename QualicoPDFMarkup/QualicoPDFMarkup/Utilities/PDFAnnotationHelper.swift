@@ -137,11 +137,28 @@ class ImageStampAnnotation: PDFAnnotation {
         // Don't call super - we handle all drawing ourselves
         // super.draw would try to draw the default stamp appearance
 
-        // Draw the pre-flipped image directly in PDF coordinates
-        // The image is already flipped, so we just draw it at the bounds origin
-        if let cgImage = pdfFlippedImage.cgImage {
-            let drawRect = CGRect(origin: bounds.origin, size: bounds.size)
+        // Save the current graphics state
+        context.saveGState()
+
+        // Use the original stamp image, not the pre-flipped one
+        // We'll apply the transform here to correctly handle PDF coordinate system
+        if let cgImage = stampImage.cgImage {
+            // Translate to the center of the bounds
+            context.translateBy(x: bounds.origin.x + bounds.size.width / 2,
+                              y: bounds.origin.y + bounds.size.height / 2)
+
+            // Flip vertically to correct for PDF coordinate system
+            context.scaleBy(x: 1.0, y: -1.0)
+
+            // Draw the image centered at origin
+            let drawRect = CGRect(x: -bounds.size.width / 2,
+                                y: -bounds.size.height / 2,
+                                width: bounds.size.width,
+                                height: bounds.size.height)
             context.draw(cgImage, in: drawRect)
         }
+
+        // Restore the graphics state
+        context.restoreGState()
     }
 }
