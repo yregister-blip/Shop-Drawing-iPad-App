@@ -7,6 +7,7 @@
 
 import Foundation
 import PDFKit
+import Combine
 
 /// Record of an annotation for undo purposes
 struct AnnotationRecord {
