@@ -138,27 +138,13 @@ class ImageStampAnnotation: PDFAnnotation {
         // super.draw would try to draw the default stamp appearance
 
         // Save the current graphics state
-        context.saveGState()
+        UIGraphicsPushContext(context)
 
-        // Use the original stamp image, not the pre-flipped one
-        // We'll apply the transform here to correctly handle PDF coordinate system
-        if let cgImage = stampImage.cgImage {
-            // Translate to the center of the bounds
-            context.translateBy(x: bounds.origin.x + bounds.size.width / 2,
-                              y: bounds.origin.y + bounds.size.height / 2)
+        // Use UIImage's draw method which handles coordinate system transformations
+        // This automatically accounts for the difference between PDF (bottom-left origin)
+        // and UIKit (top-left origin) coordinate systems
+        stampImage.draw(in: bounds)
 
-            // Flip vertically to correct for PDF coordinate system
-            context.scaleBy(x: 1.0, y: -1.0)
-
-            // Draw the image centered at origin
-            let drawRect = CGRect(x: -bounds.size.width / 2,
-                                y: -bounds.size.height / 2,
-                                width: bounds.size.width,
-                                height: bounds.size.height)
-            context.draw(cgImage, in: drawRect)
-        }
-
-        // Restore the graphics state
-        context.restoreGState()
+        UIGraphicsPopContext()
     }
 }
