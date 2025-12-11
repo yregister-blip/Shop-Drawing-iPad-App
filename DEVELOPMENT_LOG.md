@@ -707,3 +707,386 @@ The codebase is well-structured, follows Swift best practices, and is ready for 
 ---
 
 **Developer Notes:** All code includes inline comments and follows Swift naming conventions. The architecture supports the planned Phase 1 and Phase 2 features without major refactoring. The project is ready for handoff to the development team.
+
+---
+
+## Date: December 11, 2024
+
+### Session: Phase 2 Feature Implementation - Drawing Tools & Undo
+
+---
+
+## Code Review Summary
+
+### Current Codebase Analysis
+
+**Architecture Assessment: ✅ Solid Foundation**
+- MVVM pattern properly implemented with ObservableObject/Published
+- Clean separation of concerns between Views, ViewModels, Services, and Models
+- Proper use of UIViewRepresentable for PDFKit integration
+- Async/await used consistently throughout
+
+**Existing Stamp Implementation Analysis:**
+- `PDFAnnotationHelper.swift` provides stamp functionality via `ImageStampAnnotation` class
+- Stamp orientation issues were recently fixed (commits b938626, 98ab14d, fc4bdfa)
+- Stamps use CGImage direct drawing for correct PDF coordinate handling
+- Current stamp types: FABRICATED, HOLD, FIT ONLY
+
+**Key Files for Enhancement:**
+| File | Purpose | Lines |
+|------|---------|-------|
+| `PDFViewerView.swift` | Main viewer + ViewModel | 429 |
+| `PDFAnnotationHelper.swift` | Annotation creation | 114 |
+| `PDFTopToolbarView.swift` | Toolbar controls | 233 |
+| `StampAnnotation.swift` | Stamp models | 42 |
+
+**Identified Gaps:**
+1. No pen/ink drawing capability
+2. No highlight tool
+3. No text annotation
+4. No undo functionality (stamps permanent once placed)
+5. No custom stamp support (only preset types)
+
+---
+
+## Phase 2 Implementation Plan
+
+### Features to Implement
+
+| Feature | Priority | Complexity |
+|---------|----------|------------|
+| **Pen Tool** | High | Medium |
+| **Highlight Tool** | High | Medium |
+| **Text Annotations** | Medium | Medium |
+| **Undo Functionality** | High | High |
+| **Custom Stamps** | Medium | Medium |
+
+### Implementation Strategy
+
+#### 1. Annotation Tool Mode System
+Create an enum-based tool selection system:
+```swift
+enum AnnotationTool: String, CaseIterable {
+    case none
+    case stamp
+    case pen
+    case highlight
+    case text
+}
+```
+
+#### 2. Drawing Path Model
+For pen and highlight tools, track continuous strokes:
+```swift
+struct DrawingPath {
+    var points: [CGPoint]
+    var color: UIColor
+    var lineWidth: CGFloat
+    var isHighlight: Bool
+    var pageIndex: Int
+}
+```
+
+#### 3. Undo Stack Architecture
+Implement annotation history for undo:
+```swift
+class AnnotationHistoryManager {
+    private var undoStack: [(PDFAnnotation, PDFPage)]
+    func recordAnnotation(_ annotation: PDFAnnotation, on page: PDFPage)
+    func undo() -> Bool
+    func canUndo: Bool
+}
+```
+
+#### 4. Gesture Handling Updates
+- **Tap**: Stamp placement, text annotation placement
+- **Pan**: Pen/highlight drawing
+- **Long press**: Potential erase/select mode (future)
+
+---
+
+## Implementation Details
+
+### New Files Created:
+- `Models/AnnotationTool.swift` - Tool mode enum and drawing models
+- `Utilities/AnnotationHistoryManager.swift` - Undo functionality
+- `Views/AnnotationToolbarView.swift` - New annotation toolbar
+
+### Files Modified:
+- `PDFViewerView.swift` - Add pan gesture, tool mode handling
+- `PDFAnnotationHelper.swift` - Add pen, highlight, text annotation support
+- `PDFTopToolbarView.swift` - Add new tool buttons
+- `StampAnnotation.swift` - Add custom stamp support
+- `QualicoBranding.swift` - Add pen/highlight colors
+
+---
+
+## Implementation Summary
+
+### New Files Created
+
+#### 1. `Models/AnnotationTool.swift` (250+ lines)
+Complete annotation tool system including:
+- `AnnotationTool` enum with cases: `.none`, `.stamp`, `.pen`, `.highlight`, `.text`
+- `DrawingPath` struct for tracking pen/highlight strokes
+- `TextAnnotationData` struct for text annotations
+- `CustomStamp` struct with `CodableColor` for persistence
+- `DrawingColor` enum with 7 color options
+- `LineWidth` enum with 4 thickness presets
+
+#### 2. `Utilities/AnnotationHistoryManager.swift` (140+ lines)
+Undo functionality implementation:
+- `AnnotationRecord` struct for tracking annotation+page pairs
+- `AnnotationHistoryManager` class with:
+  - 50-item history stack (configurable)
+  - `recordAnnotation()` - adds annotation to undo stack
+  - `undo()` - removes last annotation from PDF
+  - `clearHistory()` - resets when loading new document
+  - Batch operations for complex undo scenarios
+
+### Files Modified
+
+#### 3. `PDFAnnotationHelper.swift` (400+ lines, was 114)
+Extended with comprehensive annotation support:
+
+**Stamp Enhancements:**
+- Return type changed to `PDFAnnotation?` for undo tracking
+- Added `addCustomStamp()` for user-defined stamps
+- Added `createCustomStampImage()` with custom colors
+
+**Pen/Ink Annotations:**
+- `addInkAnnotation()` - basic line drawing
+- `addSmoothInkAnnotation()` - bezier curve smoothing
+
+**Highlight Annotations:**
+- `addHighlightAnnotation()` - semi-transparent strokes
+- `HighlightPathAnnotation` class with multiply blend mode
+
+**Text Annotations:**
+- `addTextAnnotation()` - simple text placement
+- `addTextAnnotationWithBackground()` - text with white background
+- `TextBoxAnnotation` class with custom rendering
+
+#### 4. `PDFTopToolbarView.swift` (425 lines, was 233)
+Complete toolbar redesign:
+
+**New Parameters:**
+```swift
+@Binding var selectedTool: AnnotationTool
+@Binding var selectedColor: DrawingColor
+@Binding var selectedLineWidth: LineWidth
+let canUndo: Bool
+let onUndoTapped: () -> Void
+@Binding var customStamps: [CustomStamp]
+let onAddCustomStamp: () -> Void
+```
+
+**New UI Components:**
+- `annotationToolbar` - horizontal tool selector
+- `drawingOptionsBar` - color/width pickers (for pen/highlight)
+- `undoButton` - undo with disabled state
+- `ToolModeIndicator` - contextual floating indicator
+
+#### 5. `PDFViewerView.swift` (830+ lines, was 429)
+Major expansion with drawing support:
+
+**New State Variables:**
+```swift
+@State private var showTextInput = false
+@State private var textInputText = ""
+@State private var textInputLocation: CGPoint = .zero
+@State private var showCustomStampSheet = false
+```
+
+**PDFKitView Enhancements:**
+- Added `UIPanGestureRecognizer` for drawing
+- `DrawingOverlayView` for real-time stroke preview
+- Gesture handling based on active tool
+
+**New Views:**
+- `CustomStampCreatorView` - sheet for creating custom stamps
+- `DrawingOverlayView` - UIView for temporary stroke display
+
+**PDFViewerViewModel Updates:**
+- Integrated `AnnotationHistoryManager`
+- New handlers: `handleTap()`, `handleTextInput()`, `handleDrawingComplete()`
+- Undo support with `canUndo` observable
+
+---
+
+## Feature Implementation Details
+
+### 1. Pen Tool
+- **Gesture:** Pan gesture with 1 finger
+- **Visual Feedback:** Real-time overlay during drawing
+- **Annotation Type:** PDFKit `.ink` annotation
+- **Smoothing:** Quadratic bezier curves for natural strokes
+- **Colors:** 7 options (black, red, blue, green, orange, purple, yellow)
+- **Line Widths:** 4 options (1pt, 2pt, 4pt, 6pt)
+
+### 2. Highlight Tool
+- **Gesture:** Pan gesture with 1 finger
+- **Appearance:** Semi-transparent (35% alpha) with multiply blend
+- **Line Width:** 6x pen width for thick strokes
+- **Colors:** Same 7 options as pen
+- **Use Case:** Marking up text or areas on drawings
+
+### 3. Text Annotation
+- **Gesture:** Tap to place
+- **Input:** System alert with text field
+- **Appearance:** Text with white semi-transparent background
+- **Font:** System font, 14pt
+- **Colors:** Uses selected drawing color
+
+### 4. Undo Functionality
+- **Capacity:** 50 items (configurable)
+- **Scope:** Per-document (cleared on navigation)
+- **Types:** Stamps, pen strokes, highlights, text
+- **UI:** Undo button in toolbar with disabled state
+
+### 5. Custom Stamps
+- **Creation:** Sheet with name, text, color selection
+- **Preview:** Live preview of stamp appearance
+- **Storage:** In-memory (can be persisted to UserDefaults)
+- **Colors:** All drawing colors available
+
+---
+
+## Architecture Diagram
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                    PDFViewerView                              │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │              PDFTopToolbarView                        │   │
+│  │  [Pan] [Stamp] [Pen] [Highlight] [Text]  [Undo] [Save]│   │
+│  │           ┌─────────────────────┐                     │   │
+│  │           │  drawingOptionsBar  │ (when pen/highlight)│   │
+│  │           │  Color │ Width      │                     │   │
+│  │           └─────────────────────┘                     │   │
+│  └──────────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │                    PDFKitView                         │   │
+│  │  ┌────────────────────────────────────────────────┐  │   │
+│  │  │                 PDFView                         │  │   │
+│  │  │  ┌──────────────────────────────────────────┐  │  │   │
+│  │  │  │         DrawingOverlayView              │  │  │   │
+│  │  │  │       (temporary stroke preview)         │  │  │   │
+│  │  │  └──────────────────────────────────────────┘  │  │   │
+│  │  └────────────────────────────────────────────────┘  │   │
+│  │  Coordinator: handles tap + pan gestures              │   │
+│  └──────────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │              ToolModeIndicator                        │   │
+│  │         "Draw to annotate" (floating)                 │   │
+│  └──────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────┐
+│                 PDFViewerViewModel                           │
+│  • selectedTool: AnnotationTool                             │
+│  • selectedColor: DrawingColor                              │
+│  • selectedLineWidth: LineWidth                             │
+│  • customStamps: [CustomStamp]                              │
+│  • historyManager: AnnotationHistoryManager                 │
+│  • handleTap() → PDFAnnotationHelper.addStamp()             │
+│  • handleDrawingComplete() → addInk/Highlight()             │
+│  • handleTextInput() → addTextAnnotation()                  │
+│  • undo() → historyManager.undo()                           │
+└──────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────┐
+│               PDFAnnotationHelper (static)                   │
+│  • addStamp() → ImageStampAnnotation                        │
+│  • addCustomStamp() → ImageStampAnnotation                  │
+│  • addSmoothInkAnnotation() → PDFAnnotation(.ink)           │
+│  • addHighlightAnnotation() → HighlightPathAnnotation       │
+│  • addTextAnnotationWithBackground() → TextBoxAnnotation    │
+└──────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────┐
+│            AnnotationHistoryManager                          │
+│  • undoStack: [AnnotationRecord]                            │
+│  • recordAnnotation(annotation, page)                        │
+│  • undo() → page.removeAnnotation()                         │
+│  • clearHistory()                                           │
+└──────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Testing Recommendations
+
+### Unit Tests Needed
+1. **AnnotationTool** - Tool selection and properties
+2. **DrawingPath** - Bounding rect calculation
+3. **AnnotationHistoryManager** - Undo/redo operations
+4. **CustomStamp** - Creation and encoding
+
+### Integration Tests Needed
+1. **Pen Drawing** - Stroke creation and persistence
+2. **Highlight** - Transparency and blend mode
+3. **Text Annotations** - Placement and styling
+4. **Undo** - Multi-annotation undo sequences
+5. **Custom Stamps** - Creation and placement
+
+### UI Tests Needed
+1. **Tool Selection** - Toolbar button states
+2. **Drawing Flow** - Gesture recognition
+3. **Text Input** - Alert presentation
+4. **Custom Stamp Sheet** - Form validation
+
+---
+
+## Phase 2 Checklist Status
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| **Pen Tool** | ✅ Complete | Smooth bezier curves, 7 colors, 4 widths |
+| **Highlight Tool** | ✅ Complete | Semi-transparent, multiply blend |
+| **Text Annotations** | ✅ Complete | With background, color selection |
+| **Undo Functionality** | ✅ Complete | 50-item stack, per-document |
+| **Custom Stamps** | ✅ Complete | Creation UI, color customization |
+
+---
+
+## Known Limitations
+
+1. **Undo is Session-Only** - History cleared when navigating away
+2. **Custom Stamps Not Persisted** - Lost on app restart (add UserDefaults storage)
+3. **No Redo** - Only undo supported currently
+4. **Single Touch Drawing** - No multi-touch gesture support
+5. **Fixed Text Size** - Text annotations use 14pt font only
+
+---
+
+## Future Enhancements
+
+1. **Redo Support** - Add redo stack
+2. **Annotation Selection** - Tap to select and delete
+3. **Move/Resize** - Drag annotations to new positions
+4. **Custom Stamp Persistence** - Save to UserDefaults/iCloud
+5. **Shape Tools** - Rectangle, circle, arrow
+6. **Multi-Touch** - Two-finger zoom while drawing
+7. **Apple Pencil** - Pressure sensitivity support
+
+---
+
+## Conclusion
+
+Phase 2 implementation is **complete**. All requested features have been implemented:
+
+✅ Pen tool with smooth drawing
+✅ Highlight tool with transparency
+✅ Text annotation tool
+✅ Undo functionality
+✅ Custom stamps
+
+The codebase has been significantly expanded (+700 lines) while maintaining the existing MVVM architecture. The implementation follows Swift best practices and integrates seamlessly with the existing stamp functionality.
+
+**Next Steps:**
+1. Test on physical iPad device
+2. Consider adding custom stamp persistence
+3. Evaluate Apple Pencil support for future phase
+
+---
