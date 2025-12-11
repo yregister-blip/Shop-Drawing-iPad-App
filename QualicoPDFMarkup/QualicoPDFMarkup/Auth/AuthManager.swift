@@ -237,12 +237,26 @@ class AuthManager: NSObject, ObservableObject {
 extension AuthManager: ASWebAuthenticationPresentationContextProviding {
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
         // Get the active window from the connected scenes (required for iPad, especially with Stage Manager)
-        guard let windowScene = UIApplication.shared.connectedScenes
-            .first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene,
-              let window = windowScene.windows.first(where: { $0.isKeyWindow }) ?? windowScene.windows.first else {
-            // Fallback to any available window
-            return UIApplication.shared.windows.first ?? ASPresentationAnchor()
+        // Uses modern API to avoid iOS 15 deprecation warnings
+        let windowScene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive }
+            ?? UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+
+        if let window = windowScene?.windows.first(where: { $0.isKeyWindow }) ?? windowScene?.windows.first {
+            return window
         }
-        return window
+
+        // Final fallback using modern API - find any available window from any scene
+        let fallbackWindow = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first { $0.isKeyWindow }
+            ?? UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .flatMap { $0.windows }
+                .first
+
+        return fallbackWindow ?? ASPresentationAnchor()
     }
 }
