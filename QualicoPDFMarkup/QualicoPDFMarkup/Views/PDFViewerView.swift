@@ -56,10 +56,7 @@ struct PDFViewerView: View {
                         }
                     },
                     hasUnsavedChanges: viewModel.hasUnsavedChanges,
-                    isSaving: viewModel.isSaving,
-                    onCloseTapped: {
-                        dismiss()
-                    }
+                    isSaving: viewModel.isSaving
                 )
 
                 // PDF content area
@@ -119,10 +116,14 @@ struct PDFViewerView: View {
                 isShowing: $showFileList,
                 files: viewModel.folderFiles,
                 currentFileId: viewModel.currentFile.id,
+                graphService: viewModel.graphService,
                 onFileSelected: { file in
                     Task {
                         await viewModel.navigateToFile(file)
                     }
+                },
+                onCloseViewer: {
+                    dismiss()
                 }
             )
 
@@ -236,7 +237,7 @@ class PDFViewerViewModel: ObservableObject {
     @Published var selectedStampType: StampType = .fabricated
 
     private var folderContext: FolderContext?
-    private var graphService: GraphAPIService?
+    private(set) var graphService: GraphAPIService?
     private var syncManager: SyncManager?
     private var preloadManager: FilePreloadManager?
     private var originalETag: String?

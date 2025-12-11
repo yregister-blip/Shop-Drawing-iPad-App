@@ -11,7 +11,9 @@ struct SlideOutFileListView: View {
     @Binding var isShowing: Bool
     let files: [DriveItem]
     let currentFileId: String
+    let graphService: GraphAPIService?
     let onFileSelected: (DriveItem) -> Void
+    let onCloseViewer: () -> Void
 
     @State private var dragOffset: CGFloat = 0
 
@@ -67,6 +69,7 @@ struct SlideOutFileListView: View {
                                     SlideOutFileRowView(
                                         file: file,
                                         isSelected: file.id == currentFileId,
+                                        graphService: graphService,
                                         onTap: {
                                             onFileSelected(file)
                                             withAnimation(.easeInOut(duration: 0.25)) {
@@ -83,6 +86,27 @@ struct SlideOutFileListView: View {
                                 proxy.scrollTo(currentFileId, anchor: .center)
                             }
                         }
+
+                        Divider()
+
+                        // Close Viewer button at bottom
+                        Button(action: {
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                isShowing = false
+                            }
+                            onCloseViewer()
+                        }) {
+                            HStack {
+                                Image(systemName: "xmark.circle")
+                                    .font(.body)
+                                Text("Close Viewer")
+                                    .font(.body)
+                            }
+                            .foregroundColor(.red)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                        }
+                        .background(Color(UIColor.secondarySystemBackground))
                     }
                     .frame(width: panelWidth)
                     .background(Color(UIColor.systemBackground))
@@ -117,15 +141,18 @@ struct SlideOutFileListView: View {
 struct SlideOutFileRowView: View {
     let file: DriveItem
     let isSelected: Bool
+    let graphService: GraphAPIService?
     let onTap: () -> Void
+
+    @State private var thumbnail: UIImage?
+    @State private var isLoadingThumbnail = false
 
     var body: some View {
         Button(action: onTap) {
             HStack {
-                Image(systemName: "doc.text.fill")
-                    .font(.title3)
-                    .foregroundColor(.red)
-                    .frame(width: 32)
+                // Thumbnail or icon
+                thumbnailView
+                    .frame(width: 36, height: 46)
 
                 Text(file.name)
                     .font(.body)
@@ -151,5 +178,50 @@ struct SlideOutFileRowView: View {
             .cornerRadius(8)
         }
         .buttonStyle(.plain)
+        .task {
+            await loadThumbnailIfNeeded()
+        }
+    }
+
+    @ViewBuilder
+    private var thumbnailView: some View {
+        if let thumbnail = thumbnail {
+            // PDF thumbnail
+            Image(uiImage: thumbnail)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .cornerRadius(3)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 3)
+                        .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                )
+        } else if isLoadingThumbnail {
+            // Loading placeholder
+            RoundedRectangle(cornerRadius: 3)
+                .fill(Color.gray.opacity(0.1))
+                .overlay(
+                    ProgressView()
+                        .scaleEffect(0.5)
+                )
+        } else {
+            // PDF icon fallback
+            Image(systemName: "doc.text.fill")
+                .font(.title3)
+                .foregroundColor(.red)
+        }
+    }
+
+    private func loadThumbnailIfNeeded() async {
+        guard thumbnail == nil, let graphService = graphService else { return }
+
+        // Check cache first
+        if let cached = PDFThumbnailService.shared.getCachedThumbnail(for: file.id) {
+            thumbnail = cached
+            return
+        }
+
+        isLoadingThumbnail = true
+        thumbnail = await PDFThumbnailService.shared.loadThumbnail(for: file, using: graphService)
+        isLoadingThumbnail = false
     }
 }
