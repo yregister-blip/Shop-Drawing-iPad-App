@@ -2,7 +2,7 @@
 //  FileBrowserView.swift
 //  QualicoPDFMarkup
 //
-//  Paginated file browser with natural sorting
+//  Paginated file browser with natural sorting and navigation to PDF viewer
 //
 
 import SwiftUI
@@ -11,11 +11,10 @@ import Combine
 struct FileBrowserView: View {
     @EnvironmentObject var authManager: AuthManager
     @StateObject private var viewModel = FileBrowserViewModel()
-    @State private var selectedFile: DriveItem?
-    @State private var showPDFViewer = false
+    @State private var navigationPath = NavigationPath()
 
     var body: some View {
-        NavigationView {
+        NavigationStack(path: $navigationPath) {
             Group {
                 if viewModel.isLoading && viewModel.items.isEmpty {
                     ProgressView("Loading...")
@@ -42,8 +41,10 @@ struct FileBrowserView: View {
                                         await viewModel.navigateToFolder(item)
                                     }
                                 } else if item.isPDF {
-                                    selectedFile = item
-                                    showPDFViewer = true
+                                    // Navigate to PDF viewer via navigation path
+                                    if let context = viewModel.createFolderContext(for: item) {
+                                        navigationPath.append(PDFNavigationItem(file: item, context: context))
+                                    }
                                 }
                             }
                         }
@@ -102,20 +103,32 @@ struct FileBrowserView: View {
                     }
                 }
             }
-            .sheet(isPresented: $showPDFViewer) {
-                if let file = selectedFile {
-                    PDFViewerView(
-                        file: file,
-                        folderContext: viewModel.createFolderContext(for: file)
-                    )
-                }
+            .navigationDestination(for: PDFNavigationItem.self) { navItem in
+                PDFViewerView(
+                    file: navItem.file,
+                    folderContext: navItem.context
+                )
+                .environmentObject(authManager)
             }
         }
-        .navigationViewStyle(.stack)
         .task {
             viewModel.setGraphService(authManager: authManager)
             await viewModel.loadRootFolder()
         }
+    }
+}
+
+// Navigation item for PDF viewer destination
+struct PDFNavigationItem: Hashable {
+    let file: DriveItem
+    let context: FolderContext
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(file.id)
+    }
+
+    static func == (lhs: PDFNavigationItem, rhs: PDFNavigationItem) -> Bool {
+        lhs.file.id == rhs.file.id
     }
 }
 
