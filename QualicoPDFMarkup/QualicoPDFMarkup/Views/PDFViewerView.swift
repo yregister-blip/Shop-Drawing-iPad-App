@@ -19,6 +19,7 @@ struct PDFViewerView: View {
     @State private var showTextInput = false
     @State private var textInputText = ""
     @State private var textInputLocation: CGPoint = .zero
+    @State private var textInputPDFView: PDFView? = nil
     @State private var showCustomStampSheet = false
 
     private let edgeSwipeThreshold: CGFloat = 50
@@ -68,6 +69,7 @@ struct PDFViewerView: View {
                     hasUnsavedChanges: viewModel.hasUnsavedChanges,
                     isSaving: viewModel.isSaving,
                     customStamps: $viewModel.customStamps,
+                    selectedCustomStamp: $viewModel.selectedCustomStamp,
                     onAddCustomStamp: {
                         showCustomStampSheet = true
                     }
@@ -110,6 +112,7 @@ struct PDFViewerView: View {
                         },
                         onTextTap: { point, pdfView in
                             textInputLocation = point
+                            textInputPDFView = pdfView
                             showTextInput = true
                         },
                         onDrawingComplete: { path, pdfView in
@@ -180,11 +183,13 @@ struct PDFViewerView: View {
             TextField("Enter text", text: $textInputText)
             Button("Cancel", role: .cancel) {
                 textInputText = ""
+                textInputPDFView = nil
             }
             Button("Add") {
-                if !textInputText.isEmpty {
-                    viewModel.handleTextInput(text: textInputText, at: textInputLocation)
+                if !textInputText.isEmpty, let pdfView = textInputPDFView {
+                    viewModel.handleTextInput(text: textInputText, at: textInputLocation, in: pdfView)
                     textInputText = ""
+                    textInputPDFView = nil
                 }
             }
         } message: {
@@ -528,6 +533,7 @@ class PDFViewerViewModel: ObservableObject {
     // Annotation tool controls
     @Published var selectedTool: AnnotationTool = .none
     @Published var selectedStampType: StampType = .fabricated
+    @Published var selectedCustomStamp: CustomStamp? = nil
     @Published var selectedColor: DrawingColor = .black
     @Published var selectedLineWidth: LineWidth = .medium
     @Published var customStamps: [CustomStamp] = []
@@ -633,12 +639,26 @@ class PDFViewerViewModel: ObservableObject {
         guard selectedTool == .stamp else { return }
         guard let page = pdfView.page(for: screenPoint, nearest: true) else { return }
 
-        if let annotation = PDFAnnotationHelper.addStamp(
-            to: page,
-            at: screenPoint,
-            in: pdfView,
-            stampType: selectedStampType
-        ) {
+        let annotation: PDFAnnotation?
+
+        // Check if a custom stamp is selected
+        if let customStamp = selectedCustomStamp {
+            annotation = PDFAnnotationHelper.addCustomStamp(
+                to: page,
+                at: screenPoint,
+                in: pdfView,
+                customStamp: customStamp
+            )
+        } else {
+            annotation = PDFAnnotationHelper.addStamp(
+                to: page,
+                at: screenPoint,
+                in: pdfView,
+                stampType: selectedStampType
+            )
+        }
+
+        if let annotation = annotation {
             historyManager.recordAnnotation(annotation, on: page)
             hasUnsavedChanges = true
             currentFile.localStatus = .stamped
@@ -647,9 +667,9 @@ class PDFViewerViewModel: ObservableObject {
     }
 
     /// Handle text input from alert
-    func handleTextInput(text: String, at screenPoint: CGPoint) {
-        guard let pdfView = currentPDFView,
-              let page = pdfView.page(for: screenPoint, nearest: true) else { return }
+    func handleTextInput(text: String, at screenPoint: CGPoint, in pdfView: PDFView) {
+        currentPDFView = pdfView
+        guard let page = pdfView.page(for: screenPoint, nearest: true) else { return }
 
         if let annotation = PDFAnnotationHelper.addTextAnnotationWithBackground(
             to: page,

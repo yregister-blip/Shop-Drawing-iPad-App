@@ -197,19 +197,13 @@ enum PDFAnnotationHelper {
         // Calculate bounds from points
         let bounds = calculateBounds(for: pdfPoints, lineWidth: path.lineWidth)
 
-        // Create ink annotation
-        let annotation = PDFAnnotation(bounds: bounds, forType: .ink, withProperties: nil)
-
-        // Create smooth UIBezierPath
-        let bezierPath = createSmoothPath(from: pdfPoints)
-
-        // Set annotation properties
-        annotation.color = path.color
-        annotation.border = PDFBorder()
-        annotation.border?.lineWidth = path.lineWidth
-
-        // Add the path to the annotation
-        annotation.add(bezierPath)
+        // Create custom ink annotation with proper drawing
+        let annotation = InkPathAnnotation(
+            bounds: bounds,
+            points: pdfPoints,
+            color: path.color,
+            lineWidth: path.lineWidth
+        )
 
         page.addAnnotation(annotation)
         return annotation
@@ -230,8 +224,8 @@ enum PDFAnnotationHelper {
             pdfView.convert(screenPoint, to: page)
         }
 
-        // Calculate bounds with extra padding for highlight width
-        let highlightWidth = path.lineWidth * 6  // Highlights are wider
+        // Use the line width directly - it's already set to highlight width by the caller
+        let highlightWidth = path.lineWidth
         let bounds = calculateBounds(for: pdfPoints, lineWidth: highlightWidth)
 
         // Create a custom highlight annotation using ink with transparency
@@ -423,6 +417,64 @@ class ImageStampAnnotation: PDFAnnotation {
     }
 }
 
+/// Custom annotation for ink/pen paths
+class InkPathAnnotation: PDFAnnotation {
+    private let points: [CGPoint]
+    private let inkColor: UIColor
+    private let strokeWidth: CGFloat
+
+    init(bounds: CGRect, points: [CGPoint], color: UIColor, lineWidth: CGFloat) {
+        self.points = points
+        self.inkColor = color
+        self.strokeWidth = lineWidth
+        super.init(bounds: bounds, forType: .ink, withProperties: nil)
+
+        // Set basic properties
+        self.color = color
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func draw(with box: PDFDisplayBox, in context: CGContext) {
+        guard points.count >= 2 else { return }
+
+        context.saveGState()
+
+        // Set up drawing properties for smooth ink strokes
+        context.setStrokeColor(inkColor.cgColor)
+        context.setLineWidth(strokeWidth)
+        context.setLineCap(.round)
+        context.setLineJoin(.round)
+
+        // Draw smooth path using quadratic curves
+        context.move(to: points[0])
+
+        if points.count == 2 {
+            context.addLine(to: points[1])
+        } else {
+            for i in 1..<points.count {
+                let midPoint = CGPoint(
+                    x: (points[i - 1].x + points[i].x) / 2,
+                    y: (points[i - 1].y + points[i].y) / 2
+                )
+
+                if i == 1 {
+                    context.addLine(to: midPoint)
+                } else {
+                    context.addQuadCurve(to: midPoint, control: points[i - 1])
+                }
+            }
+            context.addLine(to: points.last!)
+        }
+
+        context.strokePath()
+
+        context.restoreGState()
+    }
+}
+
 /// Custom annotation for highlight paths with transparency
 class HighlightPathAnnotation: PDFAnnotation {
     private let points: [CGPoint]
@@ -500,9 +552,13 @@ class TextBoxAnnotation: PDFAnnotation {
         context.setLineWidth(0.5)
         context.stroke(bgRect)
 
-        // Draw text
-        // Note: We need to flip context for text drawing in PDF coordinate system
-        context.textMatrix = .identity
+        // Draw text - need to flip coordinate system for UIKit text drawing
+        // PDF has origin at bottom-left, UIKit at top-left
+        context.saveGState()
+
+        // Flip the context for text drawing
+        context.translateBy(x: 0, y: bounds.minY + bounds.maxY)
+        context.scaleBy(x: 1, y: -1)
 
         let attributes: [NSAttributedString.Key: Any] = [
             .font: textFont,
@@ -510,6 +566,8 @@ class TextBoxAnnotation: PDFAnnotation {
         ]
 
         let textSize = (displayText as NSString).size(withAttributes: attributes)
+
+        // Calculate centered position (in flipped coordinates)
         let textRect = CGRect(
             x: bounds.minX + (bounds.width - textSize.width) / 2,
             y: bounds.minY + (bounds.height - textSize.height) / 2,
@@ -522,6 +580,7 @@ class TextBoxAnnotation: PDFAnnotation {
         (displayText as NSString).draw(in: textRect, withAttributes: attributes)
         UIGraphicsPopContext()
 
+        context.restoreGState()
         context.restoreGState()
     }
 }
