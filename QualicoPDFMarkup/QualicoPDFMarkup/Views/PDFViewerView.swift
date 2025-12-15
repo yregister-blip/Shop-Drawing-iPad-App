@@ -253,7 +253,7 @@ struct PDFViewerView: View {
             viewModel.setGraphService(authManager: authManager)
             await viewModel.loadPDF()
         }
-        .onChange(of: viewModel.selectedTool) { _ in
+        .onChange(of: viewModel.selectedTool) {
             // Clear selection when switching tools
             if viewModel.selectedTool != .none {
                 selectedAnnotation = nil
@@ -524,10 +524,10 @@ struct PDFKitView: UIViewRepresentable {
                 // Use PDFKit's native hit testing
                 if let hitAnnotation = page.annotation(at: pagePoint) {
                     // Debug Log: See exactly what we are tapping
-                    print("👇 Tapped Annotation: Type=\(hitAnnotation.type ?? "nil"), Subtype=\(hitAnnotation.subtype?.rawValue ?? "nil")")
+                    print("👇 Tapped Annotation: Type=\(hitAnnotation.type ?? "nil")")
 
                     // Check for Link OR Widget (Bluebeam sometimes uses Widgets for complex links)
-                    if hitAnnotation.subtype == .link || hitAnnotation.subtype == .widget {
+                    if hitAnnotation.type == "Link" || hitAnnotation.type == "Widget" {
                         print("🔗 Link/Widget detected - Passing control to PDFKit")
                         return
                     }
