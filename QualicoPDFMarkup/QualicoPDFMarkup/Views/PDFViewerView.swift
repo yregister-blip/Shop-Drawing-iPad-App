@@ -427,6 +427,7 @@ struct PDFKitView: UIViewRepresentable {
     func makeUIView(context: Context) -> PDFView {
         let pdfView = PDFView()
         pdfView.document = document
+        pdfView.delegate = context.coordinator  // Assign delegate for link handling
         pdfView.autoScales = true
         pdfView.displayMode = .singlePageContinuous
         pdfView.displayDirection = .vertical
@@ -472,7 +473,7 @@ struct PDFKitView: UIViewRepresentable {
         )
     }
 
-    class Coordinator: NSObject {
+    class Coordinator: NSObject, PDFViewDelegate {
         let onTap: (CGPoint, PDFView) -> Void
         let onTextTap: (CGPoint, PDFView) -> Void
         let onDrawingComplete: (DrawingPath, PDFView) -> Void
@@ -505,16 +506,29 @@ struct PDFKitView: UIViewRepresentable {
             self.selectedLineWidth = selectedLineWidth
         }
 
+        // MARK: - PDFViewDelegate
+
+        /// Called when PDFKit is about to open a link - verify PDFKit sees the link
+        func pdfViewWillClick(onLink sender: PDFView, with url: URL) {
+            print("🔗 PDFKit is attempting to open URL: \(url.absoluteString)")
+        }
+
         @objc func handleTap(_ gesture: UITapGestureRecognizer) {
             guard let pdfView = pdfView else { return }
             let point = gesture.location(in: pdfView)
 
-            // Check if a link annotation was tapped - let PDFKit handle it
+            // IMPROVED LINK DETECTION using PDFKit's native hit testing
             if let page = pdfView.page(for: point, nearest: false) {
                 let pagePoint = pdfView.convert(point, to: page)
-                for annotation in page.annotations {
-                    if annotation.type == "Link" && annotation.bounds.contains(pagePoint) {
-                        // Link tapped - PDFKit will handle it via cancelsTouchesInView = false
+
+                // Use PDFKit's native hit testing
+                if let hitAnnotation = page.annotation(at: pagePoint) {
+                    // Debug Log: See exactly what we are tapping
+                    print("👇 Tapped Annotation: Type=\(hitAnnotation.type ?? "nil"), Subtype=\(hitAnnotation.subtype?.rawValue ?? "nil")")
+
+                    // Check for Link OR Widget (Bluebeam sometimes uses Widgets for complex links)
+                    if hitAnnotation.subtype == .link || hitAnnotation.subtype == .widget {
+                        print("🔗 Link/Widget detected - Passing control to PDFKit")
                         return
                     }
                 }
@@ -959,8 +973,8 @@ class PDFViewerViewModel: ObservableObject {
         isSaving = true
 
         do {
-            // Get PDF data
-            guard let pdfData = document.dataRepresentation() else {
+            // Get PDF data - use explicit empty options to ensure all properties are preserved
+            guard let pdfData = document.dataRepresentation(options: [:]) else {
                 errorMessage = "Failed to generate PDF data"
                 isSaving = false
                 return
