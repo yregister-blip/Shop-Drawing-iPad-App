@@ -7,6 +7,7 @@
 
 import Foundation
 import Combine
+import UniformTypeIdentifiers
 
 enum GraphAPIError: Error, LocalizedError {
     case unauthorized
@@ -71,6 +72,22 @@ class GraphAPIService: ObservableObject {
         self.authManager = authManager
     }
 
+    // MARK: - Helper Functions
+
+    /// Determines the MIME type for a given filename based on its extension
+    private func mimeType(for fileName: String) -> String {
+        let url = URL(fileURLWithPath: fileName)
+        if let type = UTType(filenameExtension: url.pathExtension) {
+            return type.preferredMIMEType ?? "application/octet-stream"
+        }
+        return "application/octet-stream"
+    }
+
+    /// Checks network connectivity before making API calls
+    private func checkNetworkConnection() throws {
+        try NetworkMonitor.shared.checkConnection()
+    }
+
     // MARK: - HTTP Response Handling
 
     private func validateResponse(_ response: URLResponse) throws {
@@ -107,11 +124,15 @@ class GraphAPIService: ObservableObject {
     // MARK: - File Browsing
 
     func getRootFolder() async throws -> DriveItem {
+        try checkNetworkConnection()
+
         guard let token = await authManager.getAccessToken() else {
             throw GraphAPIError.unauthorized
         }
 
-        let url = URL(string: "\(AuthConfig.graphBaseURL)/me/drive/root")!
+        guard let url = URL(string: "\(AuthConfig.graphBaseURL)/me/drive/root") else {
+            throw GraphAPIError.invalidResponse(statusCode: 0, message: "Invalid root folder URL")
+        }
         var request = URLRequest(url: url)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
@@ -129,6 +150,8 @@ class GraphAPIService: ObservableObject {
     }
 
     func listFolder(folderId: String, skipToken: String? = nil) async throws -> (items: [DriveItem], nextLink: String?) {
+        try checkNetworkConnection()
+
         guard let token = await authManager.getAccessToken() else {
             throw GraphAPIError.unauthorized
         }
@@ -183,11 +206,15 @@ class GraphAPIService: ObservableObject {
     // MARK: - File Operations
 
     func downloadFile(itemId: String) async throws -> Data {
+        try checkNetworkConnection()
+
         guard let token = await authManager.getAccessToken() else {
             throw GraphAPIError.unauthorized
         }
 
-        let url = URL(string: "\(AuthConfig.graphBaseURL)/me/drive/items/\(itemId)/content")!
+        guard let url = URL(string: "\(AuthConfig.graphBaseURL)/me/drive/items/\(itemId)/content") else {
+            throw GraphAPIError.invalidResponse(statusCode: 0, message: "Invalid download URL for item: \(itemId)")
+        }
         var request = URLRequest(url: url)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
@@ -203,11 +230,15 @@ class GraphAPIService: ObservableObject {
     }
 
     func getItemMetadata(itemId: String) async throws -> DriveItem {
+        try checkNetworkConnection()
+
         guard let token = await authManager.getAccessToken() else {
             throw GraphAPIError.unauthorized
         }
 
-        let url = URL(string: "\(AuthConfig.graphBaseURL)/me/drive/items/\(itemId)")!
+        guard let url = URL(string: "\(AuthConfig.graphBaseURL)/me/drive/items/\(itemId)") else {
+            throw GraphAPIError.invalidResponse(statusCode: 0, message: "Invalid metadata URL for item: \(itemId)")
+        }
         var request = URLRequest(url: url)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
@@ -225,16 +256,22 @@ class GraphAPIService: ObservableObject {
 
     // MARK: - File Upload (POC - Force Overwrite)
 
-    func uploadFile(itemId: String, data: Data) async throws {
+    func uploadFile(itemId: String, data: Data, fileName: String? = nil) async throws {
+        try checkNetworkConnection()
+
         guard let token = await authManager.getAccessToken() else {
             throw GraphAPIError.unauthorized
         }
 
-        let url = URL(string: "\(AuthConfig.graphBaseURL)/me/drive/items/\(itemId)/content")!
+        guard let url = URL(string: "\(AuthConfig.graphBaseURL)/me/drive/items/\(itemId)/content") else {
+            throw GraphAPIError.invalidResponse(statusCode: 0, message: "Invalid upload URL for item: \(itemId)")
+        }
         var request = URLRequest(url: url)
         request.httpMethod = "PUT"
         request.httpBody = data
-        request.setValue("application/pdf", forHTTPHeaderField: "Content-Type")
+        // Use dynamic MIME type if filename provided, otherwise default to PDF
+        let contentType = fileName.map { mimeType(for: $0) } ?? "application/pdf"
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
         do {
@@ -257,16 +294,22 @@ class GraphAPIService: ObservableObject {
 
     // MARK: - File Upload with eTag (Phase 1)
 
-    func uploadFileWithETag(itemId: String, data: Data, eTag: String) async throws {
+    func uploadFileWithETag(itemId: String, data: Data, eTag: String, fileName: String? = nil) async throws {
+        try checkNetworkConnection()
+
         guard let token = await authManager.getAccessToken() else {
             throw GraphAPIError.unauthorized
         }
 
-        let url = URL(string: "\(AuthConfig.graphBaseURL)/me/drive/items/\(itemId)/content")!
+        guard let url = URL(string: "\(AuthConfig.graphBaseURL)/me/drive/items/\(itemId)/content") else {
+            throw GraphAPIError.invalidResponse(statusCode: 0, message: "Invalid upload URL for item: \(itemId)")
+        }
         var request = URLRequest(url: url)
         request.httpMethod = "PUT"
         request.httpBody = data
-        request.setValue("application/pdf", forHTTPHeaderField: "Content-Type")
+        // Use dynamic MIME type if filename provided, otherwise default to PDF
+        let contentType = fileName.map { mimeType(for: $0) } ?? "application/pdf"
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue(eTag, forHTTPHeaderField: "If-Match")
 
@@ -281,16 +324,25 @@ class GraphAPIService: ObservableObject {
     }
 
     func uploadNewFile(folderId: String, fileName: String, data: Data) async throws -> DriveItem {
+        try checkNetworkConnection()
+
         guard let token = await authManager.getAccessToken() else {
             throw GraphAPIError.unauthorized
         }
 
+        // Safe URL construction with proper encoding for special characters
         let encodedFileName = fileName.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? fileName
-        let url = URL(string: "\(AuthConfig.graphBaseURL)/me/drive/items/\(folderId):/\(encodedFileName):/content")!
+        let urlString = "\(AuthConfig.graphBaseURL)/me/drive/items/\(folderId):/\(encodedFileName):/content"
+
+        guard let url = URL(string: urlString) else {
+            throw GraphAPIError.invalidResponse(statusCode: 0, message: "Could not create valid URL for filename: \(fileName)")
+        }
+
         var request = URLRequest(url: url)
         request.httpMethod = "PUT"
         request.httpBody = data
-        request.setValue("application/pdf", forHTTPHeaderField: "Content-Type")
+        // Use dynamic MIME type based on filename extension
+        request.setValue(mimeType(for: fileName), forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
         do {
