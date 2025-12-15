@@ -41,6 +41,10 @@ struct PDFTopToolbarView: View {
     @Binding var selectedCustomStamp: CustomStamp?
     let onAddCustomStamp: () -> Void
 
+    // Hyperlink debugging
+    @Binding var showHyperlinks: Bool
+    let onToggleHyperlinks: () -> Void
+
     @State private var showStampPicker = false
     @State private var showColorPicker = false
     @State private var showLineWidthPicker = false
@@ -407,6 +411,16 @@ struct PDFTopToolbarView: View {
                 selectedTool = .stamp
             }) {
                 Label("Stamp Tool", systemImage: "stamp")
+            }
+
+            Divider()
+
+            // Hyperlink debugging toggle
+            Button(action: onToggleHyperlinks) {
+                Label(
+                    showHyperlinks ? "Hide Hyperlinks" : "Show Hyperlinks",
+                    systemImage: showHyperlinks ? "link.circle.fill" : "link.circle"
+                )
             }
         } label: {
             Image(systemName: "ellipsis.circle")

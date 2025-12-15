@@ -77,6 +77,10 @@ struct PDFViewerView: View {
                     selectedCustomStamp: $viewModel.selectedCustomStamp,
                     onAddCustomStamp: {
                         showCustomStampSheet = true
+                    },
+                    showHyperlinks: $viewModel.showHyperlinks,
+                    onToggleHyperlinks: {
+                        viewModel.toggleHyperlinkVisibility()
                     }
                 )
 
@@ -112,6 +116,7 @@ struct PDFViewerView: View {
                         selectedTool: viewModel.selectedTool,
                         selectedColor: viewModel.selectedColor,
                         selectedLineWidth: viewModel.selectedLineWidth,
+                        showHyperlinks: viewModel.showHyperlinks,
                         onTap: { point, pdfView in
                             viewModel.handleTap(at: point, in: pdfView)
                         },
@@ -419,6 +424,7 @@ struct PDFKitView: UIViewRepresentable {
     let selectedTool: AnnotationTool
     let selectedColor: DrawingColor
     let selectedLineWidth: LineWidth
+    let showHyperlinks: Bool
     let onTap: (CGPoint, PDFView) -> Void
     let onTextTap: (CGPoint, PDFView) -> Void
     let onDrawingComplete: (DrawingPath, PDFView) -> Void
@@ -459,6 +465,9 @@ struct PDFKitView: UIViewRepresentable {
         context.coordinator.selectedColor = selectedColor
         context.coordinator.selectedLineWidth = selectedLineWidth
         context.coordinator.onAnnotationSelected = onAnnotationSelected
+
+        // Update hyperlink highlighting
+        context.coordinator.updateHyperlinkOverlay(show: showHyperlinks, in: pdfView)
     }
 
     func makeCoordinator() -> Coordinator {
@@ -487,6 +496,9 @@ struct PDFKitView: UIViewRepresentable {
         // Drawing state
         private var currentPath: DrawingPath?
         private var drawingOverlay: DrawingOverlayView?
+
+        // Hyperlink highlighting state
+        private var hyperlinkOverlay: HyperlinkOverlayView?
 
         init(
             onTap: @escaping (CGPoint, PDFView) -> Void,
@@ -642,6 +654,143 @@ struct PDFKitView: UIViewRepresentable {
             onDrawingComplete(path, pdfView)
             currentPath = nil
         }
+
+        // MARK: - Hyperlink Overlay
+
+        func updateHyperlinkOverlay(show: Bool, in pdfView: PDFView) {
+            if show {
+                if hyperlinkOverlay == nil {
+                    let overlay = HyperlinkOverlayView(pdfView: pdfView)
+                    overlay.frame = pdfView.bounds
+                    overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+                    overlay.isUserInteractionEnabled = false
+                    pdfView.addSubview(overlay)
+                    hyperlinkOverlay = overlay
+
+                    // Listen for scroll/zoom changes to update overlay
+                    NotificationCenter.default.addObserver(
+                        forName: .PDFViewPageChanged,
+                        object: pdfView,
+                        queue: .main
+                    ) { [weak overlay] _ in
+                        overlay?.setNeedsDisplay()
+                    }
+
+                    NotificationCenter.default.addObserver(
+                        forName: .PDFViewScaleChanged,
+                        object: pdfView,
+                        queue: .main
+                    ) { [weak overlay] _ in
+                        overlay?.setNeedsDisplay()
+                    }
+                }
+                hyperlinkOverlay?.setNeedsDisplay()
+            } else {
+                hyperlinkOverlay?.removeFromSuperview()
+                hyperlinkOverlay = nil
+            }
+        }
+    }
+}
+
+// MARK: - Hyperlink Overlay View
+
+/// Overlay view that highlights all hyperlinks in the PDF
+class HyperlinkOverlayView: UIView {
+    weak var pdfView: PDFView?
+
+    init(pdfView: PDFView) {
+        self.pdfView = pdfView
+        super.init(frame: pdfView.bounds)
+        backgroundColor = .clear
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func draw(_ rect: CGRect) {
+        guard let pdfView = pdfView,
+              let document = pdfView.document,
+              let context = UIGraphicsGetCurrentContext() else { return }
+
+        // Get visible pages
+        let visibleRect = pdfView.bounds
+
+        for pageIndex in 0..<document.pageCount {
+            guard let page = document.page(at: pageIndex) else { continue }
+
+            // Check each annotation on the page
+            for annotation in page.annotations {
+                // Only highlight Link and Widget annotations
+                guard annotation.subtype == .link || annotation.subtype == .widget else { continue }
+
+                // Convert annotation bounds to view coordinates
+                let pageRect = annotation.bounds
+                let viewRect = pdfView.convert(pageRect, from: page)
+
+                // Only draw if visible
+                guard viewRect.intersects(visibleRect) else { continue }
+
+                // Determine highlight color based on link status
+                let hasDestination = annotation.url != nil ||
+                                   annotation.destination != nil ||
+                                   annotation.action != nil
+
+                if hasDestination {
+                    // Green for working links
+                    context.setFillColor(UIColor.systemGreen.withAlphaComponent(0.3).cgColor)
+                    context.setStrokeColor(UIColor.systemGreen.cgColor)
+                } else {
+                    // Red for broken links (no destination)
+                    context.setFillColor(UIColor.systemRed.withAlphaComponent(0.3).cgColor)
+                    context.setStrokeColor(UIColor.systemRed.cgColor)
+                }
+
+                context.setLineWidth(2)
+
+                // Draw filled rectangle with border
+                context.fill(viewRect)
+                context.stroke(viewRect)
+
+                // Add a small indicator in the corner
+                let indicatorSize: CGFloat = 12
+                let indicatorRect = CGRect(
+                    x: viewRect.maxX - indicatorSize - 2,
+                    y: viewRect.minY + 2,
+                    width: indicatorSize,
+                    height: indicatorSize
+                )
+
+                if hasDestination {
+                    context.setFillColor(UIColor.systemGreen.cgColor)
+                } else {
+                    context.setFillColor(UIColor.systemRed.cgColor)
+                }
+                context.fillEllipse(in: indicatorRect)
+
+                // Draw checkmark or X
+                context.setStrokeColor(UIColor.white.cgColor)
+                context.setLineWidth(1.5)
+
+                if hasDestination {
+                    // Checkmark
+                    let checkPath = UIBezierPath()
+                    checkPath.move(to: CGPoint(x: indicatorRect.minX + 3, y: indicatorRect.midY))
+                    checkPath.addLine(to: CGPoint(x: indicatorRect.midX - 1, y: indicatorRect.maxY - 3))
+                    checkPath.addLine(to: CGPoint(x: indicatorRect.maxX - 3, y: indicatorRect.minY + 3))
+                    context.addPath(checkPath.cgPath)
+                    context.strokePath()
+                } else {
+                    // X mark
+                    context.move(to: CGPoint(x: indicatorRect.minX + 3, y: indicatorRect.minY + 3))
+                    context.addLine(to: CGPoint(x: indicatorRect.maxX - 3, y: indicatorRect.maxY - 3))
+                    context.move(to: CGPoint(x: indicatorRect.maxX - 3, y: indicatorRect.minY + 3))
+                    context.addLine(to: CGPoint(x: indicatorRect.minX + 3, y: indicatorRect.maxY - 3))
+                    context.strokePath()
+                }
+            }
+        }
     }
 }
 
@@ -708,6 +857,9 @@ class PDFViewerViewModel: ObservableObject {
     @Published var selectedStampType: StampType = .fabricated
     @Published var selectedCustomStamp: CustomStamp? = nil
     @Published var customStamps: [CustomStamp] = []
+
+    // Hyperlink debugging
+    @Published var showHyperlinks: Bool = false
 
     // Independent tool settings - each tool remembers its own color and width
     @Published var toolSettings: [AnnotationTool: ToolSettings] = [
@@ -830,6 +982,9 @@ class PDFViewerViewModel: ObservableObject {
             if let document = PDFDocument(data: data) {
                 pdfDocument = document
                 hasUnsavedChanges = false
+
+                // Analyze hyperlinks in the document for debugging
+                analyzeHyperlinks(in: document)
 
                 // Preload next file if available
                 if let context = folderContext {
@@ -1072,5 +1227,104 @@ class PDFViewerViewModel: ObservableObject {
 
     var positionDisplay: String {
         folderContext?.positionDisplay ?? ""
+    }
+
+    // MARK: - Hyperlink Analysis
+
+    /// Analyzes and logs all hyperlinks in the PDF document for debugging
+    func analyzeHyperlinks(in document: PDFDocument) {
+        var linkCount = 0
+        var linksWithDestinations = 0
+        var linksWithURLs = 0
+        var linksWithActions = 0
+
+        print("📄 ========== HYPERLINK ANALYSIS ==========")
+        print("📄 Document: \(currentFile.name)")
+        print("📄 Page count: \(document.pageCount)")
+
+        for pageIndex in 0..<document.pageCount {
+            guard let page = document.page(at: pageIndex) else { continue }
+
+            for annotation in page.annotations {
+                // Check for Link annotations
+                if annotation.subtype == .link {
+                    linkCount += 1
+                    print("")
+                    print("🔗 Link #\(linkCount) on Page \(pageIndex + 1)")
+                    print("   Bounds: \(annotation.bounds)")
+                    print("   Type: \(annotation.type ?? "nil")")
+                    print("   Subtype: \(annotation.subtype?.rawValue ?? "nil")")
+
+                    // Check for URL action
+                    if let url = annotation.url {
+                        linksWithURLs += 1
+                        print("   ✅ URL: \(url.absoluteString)")
+                    } else {
+                        print("   ❌ URL: nil")
+                    }
+
+                    // Check for destination (internal link)
+                    if let destination = annotation.destination {
+                        linksWithDestinations += 1
+                        print("   ✅ Destination Page: \(destination.page?.label ?? "unknown")")
+                        print("   Destination Point: \(destination.point)")
+                    } else {
+                        print("   ❌ Destination: nil")
+                    }
+
+                    // Check for action
+                    if let action = annotation.action {
+                        linksWithActions += 1
+                        print("   ✅ Action Type: \(type(of: action))")
+
+                        // Try to extract more action details
+                        if let urlAction = action as? PDFActionURL {
+                            print("   Action URL: \(urlAction.url?.absoluteString ?? "nil")")
+                        } else if let goToAction = action as? PDFActionGoTo {
+                            print("   GoTo Destination: \(goToAction.destination?.page?.label ?? "nil")")
+                        } else if let namedAction = action as? PDFActionNamed {
+                            print("   Named Action: \(namedAction.name.rawValue)")
+                        }
+                    } else {
+                        print("   ❌ Action: nil")
+                    }
+
+                    // Log all annotation dictionary keys for debugging
+                    if let annotDict = annotation.annotationKeyValues as? [PDFAnnotationKey: Any] {
+                        print("   Keys: \(annotDict.keys.map { $0.rawValue })")
+                    }
+                }
+
+                // Also check for Widget annotations (Bluebeam sometimes uses these)
+                if annotation.subtype == .widget {
+                    print("")
+                    print("📦 Widget found on Page \(pageIndex + 1)")
+                    print("   Bounds: \(annotation.bounds)")
+                    print("   Type: \(annotation.type ?? "nil")")
+                    if let action = annotation.action {
+                        print("   Action Type: \(type(of: action))")
+                    }
+                }
+            }
+        }
+
+        print("")
+        print("📊 ========== SUMMARY ==========")
+        print("📊 Total Links: \(linkCount)")
+        print("📊 Links with URLs: \(linksWithURLs)")
+        print("📊 Links with Destinations: \(linksWithDestinations)")
+        print("📊 Links with Actions: \(linksWithActions)")
+        print("📊 ===============================")
+    }
+
+    /// Toggles hyperlink visibility
+    func toggleHyperlinkVisibility() {
+        showHyperlinks.toggle()
+        if showHyperlinks, let document = pdfDocument {
+            print("🔍 Hyperlink highlighting enabled")
+            analyzeHyperlinks(in: document)
+        } else {
+            print("🔍 Hyperlink highlighting disabled")
+        }
     }
 }
