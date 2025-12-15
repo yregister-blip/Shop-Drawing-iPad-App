@@ -32,14 +32,14 @@ enum QualicoBranding {
 
     // MARK: - Stamp Configuration
 
-    /// Default stamp size in points
-    static let stampSize = CGSize(width: 150, height: 50)
+    /// Default stamp size in points (doubled for better iPad visibility)
+    static let stampSize = CGSize(width: 300, height: 100)
 
-    /// Stamp border width
-    static let stampBorderWidth: CGFloat = 3.0
+    /// Stamp border width (scaled up for larger stamp)
+    static let stampBorderWidth: CGFloat = 4.0
 
-    /// Stamp font size
-    static let stampFontSize: CGFloat = 20.0
+    /// Stamp font size (scaled up for larger stamp)
+    static let stampFontSize: CGFloat = 36.0
 
     // MARK: - Font Names
 
@@ -90,9 +90,9 @@ enum QualicoBranding {
             borderPath.lineWidth = stampBorderWidth
             borderPath.stroke()
 
-            // Draw text
+            // Draw text (use stampFontSize for larger stamp)
             let text = "FABRICATED"
-            let font = stampFont(size: 24)
+            let font = stampFont(size: stampFontSize)
             let attributes: [NSAttributedString.Key: Any] = [
                 .font: font,
                 .foregroundColor: qualicoRed

@@ -14,6 +14,23 @@ struct FileBrowserView: View {
     @StateObject private var viewModel = FileBrowserViewModel()
     @State private var navigationPath = NavigationPath()
     @State private var showSignOutConfirmation = false
+    @State private var isGridView = false
+    @State private var searchText = ""
+
+    // Grid layout columns
+    private let gridColumns = [
+        GridItem(.adaptive(minimum: 160, maximum: 200), spacing: 16)
+    ]
+
+    // Filtered items based on search text
+    private var filteredItems: [DriveItem] {
+        if searchText.isEmpty {
+            return viewModel.items
+        }
+        return viewModel.items.filter { item in
+            item.name.localizedCaseInsensitiveContains(searchText)
+        }
+    }
 
     var body: some View {
         NavigationStack(path: $navigationPath) {
@@ -39,20 +56,34 @@ struct FileBrowserView: View {
                         }
                     }
                     .padding()
+                } else if filteredItems.isEmpty && !searchText.isEmpty {
+                    VStack(spacing: 12) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 48))
+                            .foregroundColor(.secondary)
+                        Text("No results found")
+                            .font(.headline)
+                        Text("No files match \"\(searchText)\"")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding()
+                } else if isGridView {
+                    ScrollView {
+                        LazyVGrid(columns: gridColumns, spacing: 16) {
+                            ForEach(filteredItems) { item in
+                                FileGridItemView(item: item, graphService: viewModel.graphService) {
+                                    handleItemTap(item)
+                                }
+                            }
+                        }
+                        .padding()
+                    }
                 } else {
                     List {
-                        ForEach(viewModel.items) { item in
+                        ForEach(filteredItems) { item in
                             FileRowView(item: item, graphService: viewModel.graphService) {
-                                if item.isFolder {
-                                    Task {
-                                        await viewModel.navigateToFolder(item)
-                                    }
-                                } else if item.isPDF {
-                                    // Navigate to PDF viewer via navigation path
-                                    if let context = viewModel.createFolderContext(for: item) {
-                                        navigationPath.append(PDFNavigationItem(file: item, context: context))
-                                    }
-                                }
+                                handleItemTap(item)
                             }
                         }
                     }
@@ -61,6 +92,7 @@ struct FileBrowserView: View {
             }
             .navigationTitle(viewModel.currentFolderName)
             .navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $searchText, prompt: "Search files")
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     if viewModel.canGoBack {
@@ -78,27 +110,40 @@ struct FileBrowserView: View {
                 }
 
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Menu {
+                    HStack(spacing: 8) {
+                        // Grid/List toggle button
                         Button(action: {
-                            Task {
-                                await viewModel.loadCurrentFolder()
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                isGridView.toggle()
                             }
                         }) {
-                            Label("Refresh", systemImage: "arrow.clockwise")
+                            Image(systemName: isGridView ? "list.bullet" : "square.grid.2x2")
+                                .foregroundColor(.primary)
                         }
+                        .help(isGridView ? "Switch to List View" : "Switch to Grid View")
 
-                        // Sign Out is hidden in Account submenu to prevent accidental sign-outs
                         Menu {
-                            Button(role: .destructive, action: {
-                                showSignOutConfirmation = true
+                            Button(action: {
+                                Task {
+                                    await viewModel.loadCurrentFolder()
+                                }
                             }) {
-                                Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
+                                Label("Refresh", systemImage: "arrow.clockwise")
+                            }
+
+                            // Sign Out is hidden in Account submenu to prevent accidental sign-outs
+                            Menu {
+                                Button(role: .destructive, action: {
+                                    showSignOutConfirmation = true
+                                }) {
+                                    Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
+                                }
+                            } label: {
+                                Label("Account", systemImage: "person.circle")
                             }
                         } label: {
-                            Label("Account", systemImage: "person.circle")
+                            Image(systemName: "ellipsis.circle")
                         }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
                     }
                 }
             }
@@ -121,6 +166,19 @@ struct FileBrowserView: View {
             }
         } message: {
             Text("Are you sure you want to sign out? You will need to sign in again to access files.")
+        }
+    }
+
+    private func handleItemTap(_ item: DriveItem) {
+        if item.isFolder {
+            Task {
+                await viewModel.navigateToFolder(item)
+            }
+        } else if item.isPDF {
+            // Navigate to PDF viewer via navigation path
+            if let context = viewModel.createFolderContext(for: item) {
+                navigationPath.append(PDFNavigationItem(file: item, context: context))
+            }
         }
     }
 }
@@ -234,6 +292,138 @@ struct FileRowView: View {
 
         isLoadingThumbnail = true
         thumbnail = await PDFThumbnailService.shared.loadThumbnail(for: item, using: graphService)
+        isLoadingThumbnail = false
+    }
+
+    private func formatFileSize(_ bytes: Int) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: Int64(bytes))
+    }
+}
+
+// MARK: - Grid Item View
+
+struct FileGridItemView: View {
+    let item: DriveItem
+    let graphService: GraphAPIService?
+    let onTap: () -> Void
+
+    @State private var thumbnail: UIImage?
+    @State private var isLoadingThumbnail = false
+
+    private let thumbnailSize = PDFThumbnailService.gridThumbnailSize
+
+    var body: some View {
+        Button(action: onTap) {
+            VStack(spacing: 8) {
+                // Thumbnail area
+                thumbnailView
+                    .frame(width: thumbnailSize.width, height: thumbnailSize.height)
+                    .background(Color(UIColor.secondarySystemBackground))
+                    .cornerRadius(8)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+                    )
+                    .overlay(alignment: .topTrailing) {
+                        if item.localStatus == .stamped {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(BrandColors.primaryRed)
+                                .padding(6)
+                        }
+                    }
+
+                // Filename
+                Text(item.name)
+                    .font(.caption)
+                    .foregroundColor(.primary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: thumbnailSize.width)
+
+                // File size (for PDFs)
+                if let size = item.size, !item.isFolder {
+                    Text(formatFileSize(size))
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(8)
+            .background(Color(UIColor.systemBackground))
+            .cornerRadius(12)
+            .shadow(color: .black.opacity(0.05), radius: 2, x: 0, y: 1)
+        }
+        .buttonStyle(.plain)
+        .task {
+            await loadThumbnailIfNeeded()
+        }
+    }
+
+    @ViewBuilder
+    private var thumbnailView: some View {
+        if item.isFolder {
+            // Folder icon
+            VStack {
+                Spacer()
+                Image(systemName: "folder.fill")
+                    .font(.system(size: 60))
+                    .foregroundColor(BrandColors.darkGray)
+                Spacer()
+            }
+        } else if let thumbnail = thumbnail {
+            // PDF thumbnail
+            Image(uiImage: thumbnail)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+        } else if item.isPDF && isLoadingThumbnail {
+            // Loading placeholder
+            VStack {
+                Spacer()
+                ProgressView()
+                    .scaleEffect(1.2)
+                Text("Loading...")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .padding(.top, 4)
+                Spacer()
+            }
+        } else if item.isPDF {
+            // PDF icon fallback
+            VStack {
+                Spacer()
+                Image(systemName: "doc.text.fill")
+                    .font(.system(size: 60))
+                    .foregroundColor(BrandColors.primaryRed)
+                Spacer()
+            }
+        } else {
+            // Generic file icon
+            VStack {
+                Spacer()
+                Image(systemName: "doc.fill")
+                    .font(.system(size: 60))
+                    .foregroundColor(.gray)
+                Spacer()
+            }
+        }
+    }
+
+    private func loadThumbnailIfNeeded() async {
+        guard item.isPDF, thumbnail == nil, let graphService = graphService else { return }
+
+        // Check cache first
+        if let cached = PDFThumbnailService.shared.getCachedThumbnail(for: item.id, targetSize: thumbnailSize) {
+            thumbnail = cached
+            return
+        }
+
+        isLoadingThumbnail = true
+        thumbnail = await PDFThumbnailService.shared.loadThumbnail(
+            for: item,
+            using: graphService,
+            targetSize: thumbnailSize
+        )
         isLoadingThumbnail = false
     }
 

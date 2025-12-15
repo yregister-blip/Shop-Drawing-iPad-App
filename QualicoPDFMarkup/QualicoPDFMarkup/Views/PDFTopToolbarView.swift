@@ -70,6 +70,11 @@ struct PDFTopToolbarView: View {
                 drawingOptionsBar
             }
 
+            // Secondary toolbar for stamp options (when stamp tool is selected)
+            if selectedTool == .stamp {
+                stampOptionsBar
+            }
+
             Divider()
         }
     }
@@ -250,6 +255,102 @@ struct PDFTopToolbarView: View {
         .background(Color(UIColor.secondarySystemBackground).opacity(0.5))
     }
 
+    // MARK: - Stamp Options Bar (Secondary)
+
+    private var stampOptionsBar: some View {
+        HStack(spacing: 16) {
+            // Stamp type picker
+            Menu {
+                ForEach(StampType.allCases, id: \.self) { stampType in
+                    Button(action: {
+                        selectedStampType = stampType
+                        selectedCustomStamp = nil  // Clear custom stamp selection
+                    }) {
+                        HStack {
+                            Text(stampType.rawValue)
+                            if selectedStampType == stampType && selectedCustomStamp == nil {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "stamp")
+                        .foregroundColor(BrandColors.primaryRed)
+                    Text(selectedCustomStamp == nil ? selectedStampType.rawValue : "Standard")
+                        .font(.caption)
+                        .fontWeight(.medium)
+                    Image(systemName: "chevron.down")
+                        .font(.caption2)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(selectedCustomStamp == nil ? BrandColors.primaryRed.opacity(0.1) : Color(UIColor.tertiarySystemBackground))
+                .cornerRadius(6)
+            }
+
+            // Custom stamps section
+            if !customStamps.isEmpty {
+                Divider()
+                    .frame(height: 24)
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(customStamps) { stamp in
+                            Button(action: {
+                                selectedCustomStamp = stamp
+                            }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "star.fill")
+                                        .font(.caption2)
+                                        .foregroundColor(.yellow)
+                                    Text(stamp.name)
+                                        .font(.caption)
+                                        .fontWeight(.medium)
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(selectedCustomStamp?.id == stamp.id ? BrandColors.primaryRed.opacity(0.1) : Color(UIColor.tertiarySystemBackground))
+                                .foregroundColor(selectedCustomStamp?.id == stamp.id ? BrandColors.primaryRed : .primary)
+                                .cornerRadius(6)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .stroke(selectedCustomStamp?.id == stamp.id ? BrandColors.primaryRed : Color.clear, lineWidth: 1)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Add custom stamp button
+            Button(action: onAddCustomStamp) {
+                HStack(spacing: 4) {
+                    Image(systemName: "plus.circle")
+                    Text("New")
+                        .font(.caption)
+                }
+                .foregroundColor(BrandColors.primaryRed)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+            }
+
+            Spacer()
+
+            // Filename display
+            Text(filename)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: 200)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .background(Color(UIColor.secondarySystemBackground).opacity(0.5))
+    }
+
     // MARK: - Right Controls
 
     private var rightControls: some View {
@@ -295,58 +396,17 @@ struct PDFTopToolbarView: View {
 
     private var moreMenuButton: some View {
         Menu {
-            // Stamp Type Selection submenu
-            Menu {
-                ForEach(StampType.allCases, id: \.self) { stampType in
-                    Button(action: {
-                        selectedStampType = stampType
-                        selectedCustomStamp = nil  // Clear custom stamp selection
-                        selectedTool = .stamp
-                    }) {
-                        HStack {
-                            Text(stampType.rawValue)
-                            if selectedStampType == stampType && selectedCustomStamp == nil {
-                                Image(systemName: "checkmark")
-                            }
-                        }
-                    }
-                }
-
-                if !customStamps.isEmpty {
-                    Divider()
-
-                    ForEach(customStamps) { stamp in
-                        Button(action: {
-                            selectedCustomStamp = stamp
-                            selectedTool = .stamp
-                        }) {
-                            HStack {
-                                Text(stamp.name)
-                                if selectedCustomStamp?.id == stamp.id {
-                                    Image(systemName: "checkmark")
-                                }
-                                Image(systemName: "star.fill")
-                                    .foregroundColor(.yellow)
-                            }
-                        }
-                    }
-                }
-
-                Divider()
-
-                Button(action: onAddCustomStamp) {
-                    Label("Create Custom Stamp...", systemImage: "plus.circle")
-                }
-            } label: {
-                Label("Stamp Type", systemImage: "stamp")
-            }
-
-            Divider()
-
             // Position display
             if !positionDisplay.isEmpty {
                 Text("Position: \(positionDisplay)")
                     .font(.caption)
+            }
+
+            // Quick access to stamp tool
+            Button(action: {
+                selectedTool = .stamp
+            }) {
+                Label("Stamp Tool", systemImage: "stamp")
             }
         } label: {
             Image(systemName: "ellipsis.circle")
@@ -362,11 +422,13 @@ struct PDFTopToolbarView: View {
 struct ToolModeIndicator: View {
     let tool: AnnotationTool
     let stampType: StampType?
+    let customStamp: CustomStamp?
     let color: DrawingColor?
 
-    init(tool: AnnotationTool, stampType: StampType? = nil, color: DrawingColor? = nil) {
+    init(tool: AnnotationTool, stampType: StampType? = nil, customStamp: CustomStamp? = nil, color: DrawingColor? = nil) {
         self.tool = tool
         self.stampType = stampType
+        self.customStamp = customStamp
         self.color = color
     }
 
@@ -390,6 +452,11 @@ struct ToolModeIndicator: View {
         case .none:
             return "Pan and zoom"
         case .stamp:
+            // Check custom stamp first
+            if let customStamp = customStamp {
+                return "Tap to place \(customStamp.name)"
+            }
+            // Fall back to standard stamp type
             if let stampType = stampType {
                 return "Tap to place \(stampType.rawValue)"
             }
