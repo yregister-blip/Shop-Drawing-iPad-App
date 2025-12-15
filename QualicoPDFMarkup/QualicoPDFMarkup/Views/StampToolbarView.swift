@@ -3,6 +3,7 @@
 //  QualicoPDFMarkup
 //
 //  Bottom toolbar for navigation, stamping indicator, and save status
+//  Styled with Qualico brand colors
 //
 
 import SwiftUI
@@ -27,7 +28,7 @@ struct StampToolbarView: View {
                         Text("Previous")
                             .font(.subheadline)
                     }
-                    .foregroundColor(viewModel.canNavigatePrevious ? .blue : .secondary)
+                    .foregroundColor(viewModel.canNavigatePrevious ? BrandColors.primaryRed : BrandColors.lightGray)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
                     .background(Color(UIColor.secondarySystemBackground))
@@ -41,10 +42,10 @@ struct StampToolbarView: View {
                 VStack(spacing: 4) {
                     Image(systemName: "hand.tap.fill")
                         .font(.title2)
-                        .foregroundColor(.blue)
+                        .foregroundColor(BrandColors.primaryRed)
                     Text("Tap to Stamp")
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(BrandColors.darkGray)
                 }
                 .frame(minWidth: 100)
 
@@ -63,7 +64,7 @@ struct StampToolbarView: View {
                             Image(systemName: "chevron.right")
                                 .font(.body.weight(.semibold))
                         }
-                        .foregroundColor(viewModel.canNavigateNext ? .blue : .secondary)
+                        .foregroundColor(viewModel.canNavigateNext ? BrandColors.primaryRed : BrandColors.lightGray)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 10)
                         .background(Color(UIColor.secondarySystemBackground))
@@ -90,16 +91,16 @@ struct StampToolbarView: View {
                     .foregroundColor(.orange)
                 Text("Unsaved")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(BrandColors.darkGray)
             }
         } else {
             HStack(spacing: 4) {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.body)
-                    .foregroundColor(.green)
+                    .foregroundColor(BrandColors.primaryRed)
                 Text("Saved")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(BrandColors.darkGray)
             }
         }
     }

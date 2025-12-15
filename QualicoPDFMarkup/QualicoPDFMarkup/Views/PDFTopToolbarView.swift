@@ -3,6 +3,7 @@
 //  QualicoPDFMarkup
 //
 //  Top toolbar with all controls - navigation, annotation tools, save, and menu
+//  Styled with Qualico brand colors
 //
 
 import SwiftUI
@@ -97,21 +98,21 @@ struct PDFTopToolbarView: View {
                 Button(action: onPreviousTapped) {
                     Image(systemName: "chevron.left")
                         .font(.body.weight(.semibold))
-                        .foregroundColor(canNavigatePrevious ? .blue : .secondary.opacity(0.5))
+                        .foregroundColor(canNavigatePrevious ? BrandColors.primaryRed : BrandColors.lightGray.opacity(0.5))
                         .frame(width: 36, height: 36)
                 }
                 .disabled(!canNavigatePrevious)
 
                 Text(positionDisplay)
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(BrandColors.darkGray)
                     .monospacedDigit()
                     .frame(minWidth: 50)
 
                 Button(action: onNextTapped) {
                     Image(systemName: "chevron.right")
                         .font(.body.weight(.semibold))
-                        .foregroundColor(canNavigateNext ? .blue : .secondary.opacity(0.5))
+                        .foregroundColor(canNavigateNext ? BrandColors.primaryRed : BrandColors.lightGray.opacity(0.5))
                         .frame(width: 36, height: 36)
                 }
                 .disabled(!canNavigateNext)
@@ -156,9 +157,9 @@ struct PDFTopToolbarView: View {
         }) {
             Image(systemName: selectedTool == tool ? tool.activeIconName : tool.iconName)
                 .font(.body)
-                .foregroundColor(selectedTool == tool ? .white : .primary)
+                .foregroundColor(selectedTool == tool ? .white : BrandColors.darkGray)
                 .frame(width: 36, height: 36)
-                .background(selectedTool == tool ? Color.blue : Color.clear)
+                .background(selectedTool == tool ? BrandColors.primaryRed : Color.clear)
                 .cornerRadius(6)
         }
         .help(tool.label)
@@ -268,7 +269,7 @@ struct PDFTopToolbarView: View {
         Button(action: onUndoTapped) {
             Image(systemName: "arrow.uturn.backward")
                 .font(.body)
-                .foregroundColor(canUndo ? .blue : .secondary.opacity(0.5))
+                .foregroundColor(canUndo ? BrandColors.primaryRed : BrandColors.lightGray.opacity(0.5))
                 .frame(width: 36, height: 36)
         }
         .disabled(!canUndo)
@@ -279,12 +280,13 @@ struct PDFTopToolbarView: View {
     private var saveButton: some View {
         if isSaving {
             ProgressView()
+                .tint(BrandColors.primaryRed)
                 .frame(width: 40, height: 40)
         } else {
             Button(action: onSaveTapped) {
                 Image(systemName: hasUnsavedChanges ? "square.and.arrow.down.fill" : "square.and.arrow.down")
                     .font(.title3)
-                    .foregroundColor(hasUnsavedChanges ? .blue : .secondary)
+                    .foregroundColor(hasUnsavedChanges ? BrandColors.primaryRed : BrandColors.lightGray)
                     .frame(width: 40, height: 40)
             }
             .disabled(!hasUnsavedChanges)
@@ -404,18 +406,18 @@ struct ToolModeIndicator: View {
     private var backgroundColor: Color {
         switch tool {
         case .none:
-            return .gray
+            return BrandColors.darkGray
         case .stamp:
-            return .blue
+            return BrandColors.primaryRed
         case .pen:
             if let color = color {
                 return Color(color.uiColor)
             }
-            return .black
+            return BrandColors.darkGray
         case .highlight:
             return .yellow
         case .text:
-            return .green
+            return BrandColors.primaryRed
         }
     }
 }
