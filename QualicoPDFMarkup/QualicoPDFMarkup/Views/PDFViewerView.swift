@@ -22,6 +22,11 @@ struct PDFViewerView: View {
     @State private var textInputPDFView: PDFView? = nil
     @State private var showCustomStampSheet = false
 
+    // Annotation selection state
+    @State private var selectedAnnotation: PDFAnnotation? = nil
+    @State private var selectedAnnotationPage: PDFPage? = nil
+    @State private var showDeleteConfirmation = false
+
     private let edgeSwipeThreshold: CGFloat = 50
 
     init(file: DriveItem, folderContext: FolderContext?) {
@@ -55,8 +60,8 @@ struct PDFViewerView: View {
                     },
                     selectedTool: $viewModel.selectedTool,
                     selectedStampType: $viewModel.selectedStampType,
-                    selectedColor: $viewModel.selectedColor,
-                    selectedLineWidth: $viewModel.selectedLineWidth,
+                    selectedColor: viewModel.selectedColorBinding,
+                    selectedLineWidth: viewModel.selectedLineWidthBinding,
                     canUndo: viewModel.canUndo,
                     onUndoTapped: {
                         viewModel.undo()
@@ -117,6 +122,12 @@ struct PDFViewerView: View {
                         },
                         onDrawingComplete: { path, pdfView in
                             viewModel.handleDrawingComplete(path: path, in: pdfView)
+                        },
+                        onAnnotationSelected: { annotation, page in
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                selectedAnnotation = annotation
+                                selectedAnnotationPage = page
+                            }
                         }
                     )
                 }
@@ -161,12 +172,34 @@ struct PDFViewerView: View {
                     ToolModeIndicator(
                         tool: viewModel.selectedTool,
                         stampType: viewModel.selectedTool == .stamp ? viewModel.selectedStampType : nil,
+                        customStamp: viewModel.selectedTool == .stamp ? viewModel.selectedCustomStamp : nil,
                         color: viewModel.selectedTool == .pen ? viewModel.selectedColor : nil
                     )
                     .padding(.bottom, 30)
                 }
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 .animation(.easeInOut(duration: 0.2), value: viewModel.selectedTool)
+            }
+
+            // Annotation selection indicator (floating at bottom)
+            if selectedAnnotation != nil && viewModel.selectedTool == .none {
+                VStack {
+                    Spacer()
+                    AnnotationSelectionBar(
+                        onDelete: {
+                            showDeleteConfirmation = true
+                        },
+                        onDeselect: {
+                            withAnimation {
+                                selectedAnnotation = nil
+                                selectedAnnotationPage = nil
+                            }
+                        }
+                    )
+                    .padding(.bottom, 30)
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .animation(.easeInOut(duration: 0.2), value: selectedAnnotation != nil)
             }
         }
         .navigationBarHidden(true)
@@ -202,9 +235,30 @@ struct PDFViewerView: View {
                 }
             )
         }
+        .alert("Delete Annotation", isPresented: $showDeleteConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                if let annotation = selectedAnnotation, let page = selectedAnnotationPage {
+                    viewModel.deleteAnnotation(annotation, from: page)
+                    withAnimation {
+                        selectedAnnotation = nil
+                        selectedAnnotationPage = nil
+                    }
+                }
+            }
+        } message: {
+            Text("Are you sure you want to delete this annotation? This action cannot be undone.")
+        }
         .task {
             viewModel.setGraphService(authManager: authManager)
             await viewModel.loadPDF()
+        }
+        .onChange(of: viewModel.selectedTool) { _ in
+            // Clear selection when switching tools
+            if viewModel.selectedTool != .none {
+                selectedAnnotation = nil
+                selectedAnnotationPage = nil
+            }
         }
     }
 
@@ -309,6 +363,57 @@ struct CustomStampCreatorView: View {
     }
 }
 
+// MARK: - Annotation Selection Bar
+
+struct AnnotationSelectionBar: View {
+    let onDelete: () -> Void
+    let onDeselect: () -> Void
+
+    var body: some View {
+        HStack(spacing: 16) {
+            // Selection indicator
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundColor(.white)
+                Text("Annotation Selected")
+                    .font(.subheadline)
+                    .foregroundColor(.white)
+            }
+
+            Divider()
+                .frame(height: 20)
+                .background(Color.white.opacity(0.5))
+
+            // Delete button
+            Button(action: onDelete) {
+                HStack(spacing: 4) {
+                    Image(systemName: "trash")
+                        .font(.subheadline)
+                    Text("Delete")
+                        .font(.subheadline)
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Color.red.opacity(0.8))
+                .cornerRadius(8)
+            }
+
+            // Deselect button
+            Button(action: onDeselect) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.title3)
+                    .foregroundColor(.white.opacity(0.8))
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(BrandColors.darkGray.opacity(0.9))
+        .cornerRadius(20)
+        .shadow(radius: 4)
+    }
+}
+
 struct PDFKitView: UIViewRepresentable {
     let document: PDFDocument
     let selectedTool: AnnotationTool
@@ -317,6 +422,7 @@ struct PDFKitView: UIViewRepresentable {
     let onTap: (CGPoint, PDFView) -> Void
     let onTextTap: (CGPoint, PDFView) -> Void
     let onDrawingComplete: (DrawingPath, PDFView) -> Void
+    var onAnnotationSelected: ((PDFAnnotation?, PDFPage?) -> Void)?
 
     func makeUIView(context: Context) -> PDFView {
         let pdfView = PDFView()
@@ -327,6 +433,8 @@ struct PDFKitView: UIViewRepresentable {
 
         // Add tap gesture recognizer
         let tapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
+        // Allow touches to pass through to PDFKit for link handling
+        tapGesture.cancelsTouchesInView = false
         pdfView.addGestureRecognizer(tapGesture)
 
         // Add pan gesture recognizer for drawing
@@ -349,6 +457,7 @@ struct PDFKitView: UIViewRepresentable {
         context.coordinator.selectedTool = selectedTool
         context.coordinator.selectedColor = selectedColor
         context.coordinator.selectedLineWidth = selectedLineWidth
+        context.coordinator.onAnnotationSelected = onAnnotationSelected
     }
 
     func makeCoordinator() -> Coordinator {
@@ -356,6 +465,7 @@ struct PDFKitView: UIViewRepresentable {
             onTap: onTap,
             onTextTap: onTextTap,
             onDrawingComplete: onDrawingComplete,
+            onAnnotationSelected: onAnnotationSelected,
             selectedTool: selectedTool,
             selectedColor: selectedColor,
             selectedLineWidth: selectedLineWidth
@@ -366,6 +476,7 @@ struct PDFKitView: UIViewRepresentable {
         let onTap: (CGPoint, PDFView) -> Void
         let onTextTap: (CGPoint, PDFView) -> Void
         let onDrawingComplete: (DrawingPath, PDFView) -> Void
+        var onAnnotationSelected: ((PDFAnnotation?, PDFPage?) -> Void)?
 
         weak var pdfView: PDFView?
         var selectedTool: AnnotationTool
@@ -380,6 +491,7 @@ struct PDFKitView: UIViewRepresentable {
             onTap: @escaping (CGPoint, PDFView) -> Void,
             onTextTap: @escaping (CGPoint, PDFView) -> Void,
             onDrawingComplete: @escaping (DrawingPath, PDFView) -> Void,
+            onAnnotationSelected: ((PDFAnnotation?, PDFPage?) -> Void)?,
             selectedTool: AnnotationTool,
             selectedColor: DrawingColor,
             selectedLineWidth: LineWidth
@@ -387,6 +499,7 @@ struct PDFKitView: UIViewRepresentable {
             self.onTap = onTap
             self.onTextTap = onTextTap
             self.onDrawingComplete = onDrawingComplete
+            self.onAnnotationSelected = onAnnotationSelected
             self.selectedTool = selectedTool
             self.selectedColor = selectedColor
             self.selectedLineWidth = selectedLineWidth
@@ -396,13 +509,47 @@ struct PDFKitView: UIViewRepresentable {
             guard let pdfView = pdfView else { return }
             let point = gesture.location(in: pdfView)
 
+            // Check if a link annotation was tapped - let PDFKit handle it
+            if let page = pdfView.page(for: point, nearest: false) {
+                let pagePoint = pdfView.convert(point, to: page)
+                for annotation in page.annotations {
+                    if annotation.type == "Link" && annotation.bounds.contains(pagePoint) {
+                        // Link tapped - PDFKit will handle it via cancelsTouchesInView = false
+                        return
+                    }
+                }
+            }
+
             switch selectedTool {
             case .text:
                 onTextTap(point, pdfView)
             case .stamp:
                 onTap(point, pdfView)
-            case .none, .pen, .highlight:
-                // For none/pen/highlight, tap does nothing or just selects
+            case .none:
+                // In pan/select mode, check for annotation selection
+                if let page = pdfView.page(for: point, nearest: true) {
+                    let pagePoint = pdfView.convert(point, to: page)
+
+                    // Check for markup annotations (Ink, FreeText, Stamp, Highlight, etc.)
+                    // Exclude standard PDF annotations like Link, Widget
+                    let markupTypes = ["Ink", "FreeText", "Stamp", "Highlight", "Underline", "StrikeOut", "Square", "Circle", "Line"]
+
+                    for annotation in page.annotations.reversed() { // Reverse to get topmost first
+                        if markupTypes.contains(annotation.type ?? "") {
+                            // Expand bounds slightly for easier selection
+                            let expandedBounds = annotation.bounds.insetBy(dx: -10, dy: -10)
+                            if expandedBounds.contains(pagePoint) {
+                                onAnnotationSelected?(annotation, page)
+                                return
+                            }
+                        }
+                    }
+
+                    // No annotation found - deselect
+                    onAnnotationSelected?(nil, nil)
+                }
+            case .pen, .highlight:
+                // For pen/highlight, tap does nothing (drawing is handled by pan)
                 break
             }
         }
@@ -519,6 +666,18 @@ class DrawingOverlayView: UIView {
     }
 }
 
+// MARK: - Tool Settings
+
+/// Individual settings for each annotation tool
+struct ToolSettings {
+    var color: DrawingColor
+    var width: LineWidth
+
+    static let defaultPen = ToolSettings(color: .black, width: .medium)
+    static let defaultHighlight = ToolSettings(color: .yellow, width: .thick)
+    static let defaultText = ToolSettings(color: .black, width: .medium)
+}
+
 @MainActor
 class PDFViewerViewModel: ObservableObject {
     @Published var currentFile: DriveItem
@@ -534,9 +693,52 @@ class PDFViewerViewModel: ObservableObject {
     @Published var selectedTool: AnnotationTool = .none
     @Published var selectedStampType: StampType = .fabricated
     @Published var selectedCustomStamp: CustomStamp? = nil
-    @Published var selectedColor: DrawingColor = .black
-    @Published var selectedLineWidth: LineWidth = .medium
     @Published var customStamps: [CustomStamp] = []
+
+    // Independent tool settings - each tool remembers its own color and width
+    @Published var toolSettings: [AnnotationTool: ToolSettings] = [
+        .pen: .defaultPen,
+        .highlight: .defaultHighlight,
+        .text: .defaultText
+    ]
+
+    // Computed properties for current tool's settings (used by UI bindings)
+    var selectedColor: DrawingColor {
+        get { toolSettings[selectedTool]?.color ?? .black }
+        set {
+            if toolSettings[selectedTool] != nil {
+                toolSettings[selectedTool]?.color = newValue
+            } else {
+                toolSettings[selectedTool] = ToolSettings(color: newValue, width: .medium)
+            }
+        }
+    }
+
+    var selectedLineWidth: LineWidth {
+        get { toolSettings[selectedTool]?.width ?? .medium }
+        set {
+            if toolSettings[selectedTool] != nil {
+                toolSettings[selectedTool]?.width = newValue
+            } else {
+                toolSettings[selectedTool] = ToolSettings(color: .black, width: newValue)
+            }
+        }
+    }
+
+    // Binding wrappers for SwiftUI
+    var selectedColorBinding: Binding<DrawingColor> {
+        Binding(
+            get: { self.selectedColor },
+            set: { self.selectedColor = $0 }
+        )
+    }
+
+    var selectedLineWidthBinding: Binding<LineWidth> {
+        Binding(
+            get: { self.selectedLineWidth },
+            set: { self.selectedLineWidth = $0 }
+        )
+    }
 
     // Legacy compatibility
     var isStampModeEnabled: Bool {
@@ -727,6 +929,14 @@ class PDFViewerViewModel: ObservableObject {
             hasUnsavedChanges = true
             canUndo = historyManager.canUndo
         }
+    }
+
+    // MARK: - Delete Annotation
+
+    /// Deletes a specific annotation from its page
+    func deleteAnnotation(_ annotation: PDFAnnotation, from page: PDFPage) {
+        page.removeAnnotation(annotation)
+        hasUnsavedChanges = true
     }
 
     // MARK: - Legacy Stamp Mode

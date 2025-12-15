@@ -14,28 +14,45 @@ class PDFThumbnailService {
     static let shared = PDFThumbnailService()
 
     private var thumbnailCache: [String: UIImage] = [:]
+    private var gridThumbnailCache: [String: UIImage] = [:]
     private var loadingTasks: [String: Task<UIImage?, Never>] = [:]
+    private var gridLoadingTasks: [String: Task<UIImage?, Never>] = [:]
 
-    // Thumbnail size for file list rows
-    static let thumbnailSize = CGSize(width: 44, height: 56)
+    // Thumbnail sizes
+    static let listThumbnailSize = CGSize(width: 44, height: 56)
+    static let gridThumbnailSize = CGSize(width: 200, height: 260)
+
+    // Legacy compatibility
+    static var thumbnailSize: CGSize { listThumbnailSize }
 
     private init() {}
 
     /// Gets a cached thumbnail or returns nil if not available
-    func getCachedThumbnail(for fileId: String) -> UIImage? {
-        return thumbnailCache[fileId]
+    func getCachedThumbnail(for fileId: String, targetSize: CGSize? = nil) -> UIImage? {
+        let isGridSize = targetSize != nil && targetSize!.width > Self.listThumbnailSize.width
+        return isGridSize ? gridThumbnailCache[fileId] : thumbnailCache[fileId]
     }
 
     /// Loads or generates a thumbnail for a PDF file
     /// Returns cached version if available, otherwise downloads and generates
-    func loadThumbnail(for file: DriveItem, using graphService: GraphAPIService) async -> UIImage? {
+    /// - Parameters:
+    ///   - file: The DriveItem to load thumbnail for
+    ///   - graphService: GraphAPIService for downloading
+    ///   - targetSize: Optional target size (defaults to list size, use gridThumbnailSize for grid view)
+    func loadThumbnail(for file: DriveItem, using graphService: GraphAPIService, targetSize: CGSize? = nil) async -> UIImage? {
+        let effectiveSize = targetSize ?? Self.listThumbnailSize
+        let isGridSize = effectiveSize.width > Self.listThumbnailSize.width
+        let cache = isGridSize ? gridThumbnailCache : thumbnailCache
+        let loadingTasksRef = isGridSize ? gridLoadingTasks : loadingTasks
+        let cacheKey = file.id
+
         // Return cached thumbnail if available
-        if let cached = thumbnailCache[file.id] {
+        if let cached = cache[cacheKey] {
             return cached
         }
 
         // Check if we're already loading this thumbnail
-        if let existingTask = loadingTasks[file.id] {
+        if let existingTask = loadingTasksRef[cacheKey] {
             return await existingTask.value
         }
 
@@ -48,8 +65,12 @@ class PDFThumbnailService {
                 let pdfData = try await graphService.downloadFile(itemId: file.id)
 
                 // Generate thumbnail from PDF
-                if let thumbnail = await self.generateThumbnail(from: pdfData) {
-                    self.thumbnailCache[file.id] = thumbnail
+                if let thumbnail = await self.generateThumbnail(from: pdfData, targetSize: effectiveSize) {
+                    if isGridSize {
+                        self.gridThumbnailCache[cacheKey] = thumbnail
+                    } else {
+                        self.thumbnailCache[cacheKey] = thumbnail
+                    }
                     return thumbnail
                 }
             } catch {
@@ -60,24 +81,38 @@ class PDFThumbnailService {
             return nil
         }
 
-        loadingTasks[file.id] = task
+        if isGridSize {
+            gridLoadingTasks[file.id] = task
+        } else {
+            loadingTasks[file.id] = task
+        }
+
         let result = await task.value
-        loadingTasks.removeValue(forKey: file.id)
+
+        if isGridSize {
+            gridLoadingTasks.removeValue(forKey: file.id)
+        } else {
+            loadingTasks.removeValue(forKey: file.id)
+        }
 
         return result
     }
 
     /// Generates a thumbnail from PDF data
-    private func generateThumbnail(from pdfData: Data) async -> UIImage? {
+    /// - Parameters:
+    ///   - pdfData: PDF document data
+    ///   - targetSize: Target size for the thumbnail
+    private func generateThumbnail(from pdfData: Data, targetSize: CGSize? = nil) async -> UIImage? {
         guard let document = PDFDocument(data: pdfData),
               let page = document.page(at: 0) else {
             return nil
         }
 
+        let effectiveSize = targetSize ?? Self.listThumbnailSize
         let pageRect = page.bounds(for: .mediaBox)
         let scale = min(
-            Self.thumbnailSize.width / pageRect.width,
-            Self.thumbnailSize.height / pageRect.height
+            effectiveSize.width / pageRect.width,
+            effectiveSize.height / pageRect.height
         )
 
         let thumbnailRect = CGRect(
@@ -105,10 +140,12 @@ class PDFThumbnailService {
     /// Clears the thumbnail cache
     func clearCache() {
         thumbnailCache.removeAll()
+        gridThumbnailCache.removeAll()
     }
 
     /// Removes a specific thumbnail from cache (e.g., after file is modified)
     func invalidateThumbnail(for fileId: String) {
         thumbnailCache.removeValue(forKey: fileId)
+        gridThumbnailCache.removeValue(forKey: fileId)
     }
 }
