@@ -37,6 +37,7 @@ struct PDFTopToolbarView: View {
 
     // Custom stamps
     @Binding var customStamps: [CustomStamp]
+    @Binding var selectedCustomStamp: CustomStamp?
     let onAddCustomStamp: () -> Void
 
     @State private var showStampPicker = false
@@ -297,11 +298,12 @@ struct PDFTopToolbarView: View {
                 ForEach(StampType.allCases, id: \.self) { stampType in
                     Button(action: {
                         selectedStampType = stampType
+                        selectedCustomStamp = nil  // Clear custom stamp selection
                         selectedTool = .stamp
                     }) {
                         HStack {
                             Text(stampType.rawValue)
-                            if selectedStampType == stampType {
+                            if selectedStampType == stampType && selectedCustomStamp == nil {
                                 Image(systemName: "checkmark")
                             }
                         }
@@ -313,10 +315,14 @@ struct PDFTopToolbarView: View {
 
                     ForEach(customStamps) { stamp in
                         Button(action: {
-                            // Handle custom stamp selection
+                            selectedCustomStamp = stamp
+                            selectedTool = .stamp
                         }) {
                             HStack {
                                 Text(stamp.name)
+                                if selectedCustomStamp?.id == stamp.id {
+                                    Image(systemName: "checkmark")
+                                }
                                 Image(systemName: "star.fill")
                                     .foregroundColor(.yellow)
                             }
