@@ -3,6 +3,7 @@
 //  QualicoPDFMarkup
 //
 //  Paginated file browser with natural sorting and navigation to PDF viewer
+//  Styled with Qualico brand colors
 //
 
 import SwiftUI
@@ -169,7 +170,7 @@ struct FileRowView: View {
 
                 if item.localStatus == .stamped {
                     Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(.green)
+                        .foregroundColor(BrandColors.primaryRed)
                 }
 
                 Image(systemName: "chevron.right")
@@ -187,10 +188,10 @@ struct FileRowView: View {
     @ViewBuilder
     private var thumbnailView: some View {
         if item.isFolder {
-            // Folder icon
+            // Folder icon - using brand dark gray
             Image(systemName: "folder.fill")
                 .font(.system(size: 32))
-                .foregroundColor(.blue)
+                .foregroundColor(BrandColors.darkGray)
         } else if let thumbnail = thumbnail {
             // PDF thumbnail
             Image(uiImage: thumbnail)
@@ -210,10 +211,10 @@ struct FileRowView: View {
                         .scaleEffect(0.6)
                 )
         } else if item.isPDF {
-            // PDF icon fallback
+            // PDF icon fallback - using brand red
             Image(systemName: "doc.text.fill")
                 .font(.system(size: 32))
-                .foregroundColor(.red)
+                .foregroundColor(BrandColors.primaryRed)
         } else {
             // Generic file icon
             Image(systemName: "doc.fill")

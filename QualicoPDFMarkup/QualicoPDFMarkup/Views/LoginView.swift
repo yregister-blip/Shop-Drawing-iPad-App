@@ -3,6 +3,7 @@
 //  QualicoPDFMarkup
 //
 //  Login screen with Microsoft OAuth
+//  Styled with Qualico brand colors
 //
 
 import SwiftUI
@@ -15,18 +16,20 @@ struct LoginView: View {
             Spacer()
 
             // App logo/title
-            VStack(spacing: 10) {
-                Image(systemName: "doc.text.image")
-                    .font(.system(size: 80))
-                    .foregroundColor(.blue)
+            VStack(spacing: 16) {
+                // Qualico Logo
+                Image("QualicoLogo")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 120, height: 120)
 
                 Text("Qualico PDF Markup")
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
+                    .font(.custom(QualicoBranding.fontBold, size: 28))
+                    .foregroundColor(BrandColors.darkGray)
 
                 Text("Shop Drawing Viewer & Stamping")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+                    .font(.custom(QualicoBranding.fontRegular, size: 16))
+                    .foregroundColor(BrandColors.lightGray)
             }
 
             Spacer()
@@ -36,6 +39,7 @@ struct LoginView: View {
                 if authManager.isLoading {
                     ProgressView()
                         .scaleEffect(1.5)
+                        .tint(BrandColors.primaryRed)
                 } else {
                     Button(action: {
                         Task {
@@ -46,11 +50,11 @@ struct LoginView: View {
                             Image(systemName: "person.circle.fill")
                             Text("Sign in with Microsoft")
                         }
-                        .font(.headline)
+                        .font(.custom(QualicoBranding.fontBold, size: 17))
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
                         .padding()
-                        .background(Color.blue)
+                        .background(BrandColors.primaryRed)
                         .cornerRadius(10)
                     }
                     .padding(.horizontal, 40)
@@ -58,8 +62,8 @@ struct LoginView: View {
 
                 if let errorMessage = authManager.errorMessage {
                     Text(errorMessage)
-                        .font(.caption)
-                        .foregroundColor(.red)
+                        .font(.custom(QualicoBranding.fontRegular, size: 12))
+                        .foregroundColor(BrandColors.primaryRed)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 40)
                 }
@@ -68,10 +72,11 @@ struct LoginView: View {
             Spacer()
 
             Text("For Qualico Steel Employees Only")
-                .font(.caption)
-                .foregroundColor(.secondary)
+                .font(.custom(QualicoBranding.fontRegular, size: 12))
+                .foregroundColor(BrandColors.lightGray)
                 .padding(.bottom, 20)
         }
         .padding()
+        .background(BrandColors.offWhite)
     }
 }
