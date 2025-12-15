@@ -21,6 +21,10 @@ class AuthManager: NSObject, ObservableObject {
     private var refreshRetryCount = 0
     private let maxRefreshRetries = 3
 
+    /// Tracks the current token refresh task to prevent multiple simultaneous refresh attempts
+    /// When multiple API calls detect an expired token, they should wait for the same refresh task
+    private var refreshTask: Task<Void, Never>?
+
     override init() {
         super.init()
         checkExistingToken()
@@ -226,7 +230,22 @@ class AuthManager: NSObject, ObservableObject {
         guard let token = currentToken else { return nil }
 
         if token.shouldRefresh, let refreshToken = token.refreshToken {
-            await refreshAccessToken(refreshToken: refreshToken)
+            // Coalesce multiple refresh requests - if a refresh is already in progress, wait for it
+            if let existingTask = refreshTask {
+                // Wait for the existing refresh to complete
+                _ = await existingTask.value
+            } else {
+                // Start a new refresh task
+                let task = Task { [weak self] in
+                    await self?.refreshAccessToken(refreshToken: refreshToken)
+                    await MainActor.run {
+                        self?.refreshTask = nil // Cleanup when done
+                    }
+                }
+                refreshTask = task
+                _ = await task.value
+            }
+
             return currentToken?.accessToken
         }
 
