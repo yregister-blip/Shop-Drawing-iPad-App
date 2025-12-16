@@ -497,26 +497,10 @@ class GoToRLinkHandler {
 
     /// Returns the cached filename for an annotation if available
     static func getCachedFilename(for annotation: PDFAnnotation, on page: PDFPage, in document: PDFDocument) -> String? {
-        guard let pageIndex = document.index(for: page) as Int? else { return nil }
-
-        let key = cacheKey(pageIndex: pageIndex, rect: annotation.bounds)
-        if let cached = rawLinkCache[key] {
-            return cached.targetFilename
-        }
-
-        // Try fuzzy match
-        for (_, data) in rawLinkCache where data.pageIndex == pageIndex {
-            let cachedRect = data.rect
-            let annotRect = annotation.bounds
-            if abs(cachedRect.origin.x - annotRect.origin.x) < 5 &&
-               abs(cachedRect.origin.y - annotRect.origin.y) < 5 &&
-               abs(cachedRect.width - annotRect.width) < 5 &&
-               abs(cachedRect.height - annotRect.height) < 5 {
-                return data.targetFilename
-            }
-        }
-
-        return nil
+        // Use the full extraction logic (which checks cache first, then falls back to other strategies)
+        // This ensures the overlay matches the behavior of the tap handler and remains blue
+        // even if the cache misses but the link is otherwise valid/fixed.
+        return extractTargetFilename(from: annotation, on: page, in: document)
     }
 
     // MARK: - Debug Helper

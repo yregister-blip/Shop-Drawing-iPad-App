@@ -1193,6 +1193,11 @@ class PDFViewerViewModel: ObservableObject {
                 return
             }
 
+            // REPAIR: PDFKit's dataRepresentation() can sometimes sanitize or reset
+            // the custom in-memory actions we applied. Re-run the fix immediately
+            // to ensure links remain active for the user after saving.
+            GoToRLinkHandler.fixBrokenBluebeamLinks(in: document)
+
             // Use eTag checking to detect concurrent edits
             guard let eTag = originalETag,
                   let folderId = folderContext?.folderId else {
