@@ -555,14 +555,15 @@ struct PDFKitView: UIViewRepresentable {
                     return annotation.type == "Link" || annotation.type == "Widget"
                 }
 
-                if let hitAnnotation = hitAnnotation {
+                if let hitAnnotation = hitAnnotation, let document = pdfView.document {
                     // Debug Log: See exactly what we are tapping
                     print("👇 Tapped Annotation (Manual Hit): Type=\(hitAnnotation.type ?? "nil")")
 
                     // Check for Link OR Widget (Bluebeam sometimes uses Widgets for complex links)
                     if hitAnnotation.type == "Link" || hitAnnotation.type == "Widget" {
                         // First check if this is a GoToR link (external file reference)
-                        if let targetFilename = GoToRLinkHandler.extractTargetFilename(from: hitAnnotation) {
+                        // Use the new method that checks the CGPDFDocument cache first
+                        if let targetFilename = GoToRLinkHandler.extractTargetFilename(from: hitAnnotation, on: page, in: document) {
                             print("🔗 GoToR Link detected - Target file: \(targetFilename)")
                             // Call the callback to handle navigation
                             onGoToRLinkTapped?(targetFilename)
@@ -772,15 +773,15 @@ class HyperlinkOverlayView: UIView {
                 let viewRect = pdfView.convert(annotation.bounds, from: page)
                 guard viewRect.intersects(rect) else { continue }
 
-                // Check brute-force filename extraction
-                let filename = GoToRLinkHandler.extractTargetFilename(from: annotation)
+                // Use the cached filename from CGPDFDocument extraction (populated at load time)
+                let filename = GoToRLinkHandler.getCachedFilename(for: annotation, on: page, in: document)
                 let isGoToR = filename != nil
 
                 if isGoToR {
                     context.setFillColor(UIColor.systemBlue.withAlphaComponent(0.3).cgColor)
                     context.setStrokeColor(UIColor.systemBlue.cgColor)
                 } else {
-                    // This was showing Green before, meaning it has an /A but extraction failed
+                    // Green = Link annotation exists but no cached filename (extraction failed or not GoToR)
                     context.setFillColor(UIColor.systemGreen.withAlphaComponent(0.3).cgColor)
                     context.setStrokeColor(UIColor.systemGreen.cgColor)
                 }
