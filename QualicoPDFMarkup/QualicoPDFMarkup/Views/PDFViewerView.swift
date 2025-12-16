@@ -723,7 +723,7 @@ class HyperlinkOverlayView: UIView {
             // Check each annotation on the page
             for annotation in page.annotations {
                 // Only highlight Link and Widget annotations
-                guard annotation.subtype == .link || annotation.subtype == .widget else { continue }
+                guard annotation.type == PDFAnnotationSubtype.link || annotation.type == PDFAnnotationSubtype.widget else { continue }
 
                 // Convert annotation bounds to view coordinates
                 let pageRect = annotation.bounds
@@ -1247,13 +1247,12 @@ class PDFViewerViewModel: ObservableObject {
 
             for annotation in page.annotations {
                 // Check for Link annotations
-                if annotation.subtype == .link {
+                if annotation.type == PDFAnnotationSubtype.link {
                     linkCount += 1
                     print("")
                     print("🔗 Link #\(linkCount) on Page \(pageIndex + 1)")
                     print("   Bounds: \(annotation.bounds)")
                     print("   Type: \(annotation.type ?? "nil")")
-                    print("   Subtype: \(annotation.subtype?.rawValue ?? "nil")")
 
                     // Check for URL action
                     if let url = annotation.url {
@@ -1281,7 +1280,7 @@ class PDFViewerViewModel: ObservableObject {
                         if let urlAction = action as? PDFActionURL {
                             print("   Action URL: \(urlAction.url?.absoluteString ?? "nil")")
                         } else if let goToAction = action as? PDFActionGoTo {
-                            print("   GoTo Destination: \(goToAction.destination?.page?.label ?? "nil")")
+                            print("   GoTo Destination: \(goToAction.destination.page?.label ?? "nil")")
                         } else if let namedAction = action as? PDFActionNamed {
                             print("   Named Action: \(namedAction.name.rawValue)")
                         }
@@ -1296,7 +1295,7 @@ class PDFViewerViewModel: ObservableObject {
                 }
 
                 // Also check for Widget annotations (Bluebeam sometimes uses these)
-                if annotation.subtype == .widget {
+                if annotation.type == PDFAnnotationSubtype.widget {
                     print("")
                     print("📦 Widget found on Page \(pageIndex + 1)")
                     print("   Bounds: \(annotation.bounds)")
