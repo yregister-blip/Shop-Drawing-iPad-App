@@ -18,6 +18,10 @@ struct PDFTopToolbarView: View {
     let onPreviousTapped: () -> Void
     let onNextTapped: () -> Void
 
+    // Back navigation (for linked files)
+    let canGoBack: Bool
+    let onBackTapped: () -> Void
+
     // File list
     let onMenuTapped: () -> Void
 
@@ -87,6 +91,23 @@ struct PDFTopToolbarView: View {
 
     private var leftControls: some View {
         HStack(spacing: 8) {
+            // Back button (for linked file navigation)
+            if canGoBack {
+                Button(action: onBackTapped) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.left")
+                            .font(.body.weight(.semibold))
+                        Text("Back")
+                            .font(.subheadline)
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(BrandColors.primaryRed)
+                    .cornerRadius(6)
+                }
+            }
+
             // Files/Menu button
             Button(action: onMenuTapped) {
                 HStack(spacing: 4) {

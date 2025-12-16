@@ -53,6 +53,12 @@ struct PDFViewerView: View {
                             await viewModel.navigateToNext()
                         }
                     },
+                    canGoBack: viewModel.canGoBackToLinkedFile,
+                    onBackTapped: {
+                        Task {
+                            await viewModel.goBackToLinkedFile()
+                        }
+                    },
                     onMenuTapped: {
                         withAnimation(.easeInOut(duration: 0.25)) {
                             showFileList = true
@@ -926,6 +932,10 @@ class PDFViewerViewModel: ObservableObject {
     // Reference to current PDFView for text input
     private weak var currentPDFView: PDFView?
 
+    // Navigation history for back button (tracks files opened via hyperlinks)
+    private var linkedFileHistory: [(file: DriveItem, context: FolderContext)] = []
+    @Published var canGoBackToLinkedFile = false
+
     private var folderContext: FolderContext?
     private(set) var graphService: GraphAPIService?
     private var syncManager: SyncManager?
@@ -1241,6 +1251,11 @@ class PDFViewerViewModel: ObservableObject {
 
         print("🔗 Searching for linked file: \(targetFilename)")
 
+        // Save current file to history before navigating (for back button)
+        linkedFileHistory.append((file: currentFile, context: context))
+        canGoBackToLinkedFile = true
+        print("📚 Pushed to history: \(currentFile.name) (history depth: \(linkedFileHistory.count))")
+
         // Search for the file in the current folder
         // Try exact match first
         if let matchingFile = context.files.first(where: { $0.name == targetFilename }) {
@@ -1279,13 +1294,35 @@ class PDFViewerViewModel: ObservableObject {
             return
         }
 
-        // File not found in current folder
+        // File not found in current folder - revert history push
+        _ = linkedFileHistory.popLast()
+        canGoBackToLinkedFile = !linkedFileHistory.isEmpty
         print("❌ Linked file not found in current folder: \(targetFilename)")
         print("📁 Available files: \(context.files.map { $0.name })")
 
         errorMessage = "Linked file not found"
         saveResultMessage = "Could not find '\(targetFilename)' in the current folder.\n\nThe linked file may be in a different folder or have a different name."
         showSaveAlert = true
+    }
+
+    /// Go back to the previous file in the linked file history
+    func goBackToLinkedFile() async {
+        guard let previous = linkedFileHistory.popLast() else {
+            print("⚠️ No history to go back to")
+            return
+        }
+
+        print("📚 Going back to: \(previous.file.name) (history depth: \(linkedFileHistory.count))")
+
+        // Restore the previous file and context
+        folderContext = previous.context
+        currentFile = previous.file
+        originalETag = previous.file.eTag
+        hasUnsavedChanges = false
+        historyManager.clearHistory()
+        canGoBackToLinkedFile = !linkedFileHistory.isEmpty
+
+        await loadPDF()
     }
 
     var canNavigateNext: Bool {
