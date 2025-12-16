@@ -32,9 +32,8 @@ class GoToRLinkHandler {
     static func extractTargetFilename(from annotation: PDFAnnotation) -> String? {
 
         // 1. Check Native Action (Fastest)
-        if let action = annotation.action as? PDFActionRemoteGoTo,
-           let url = action.url {
-            return url.lastPathComponent
+        if let action = annotation.action as? PDFActionRemoteGoTo {
+            return action.url.lastPathComponent
         }
 
         // 2. Brute Force Dictionary Parsing
@@ -149,9 +148,8 @@ class GoToRLinkHandler {
 
                     // 2. Check if the existing action is already valid
                     var needsRepair = true
-                    if let currentAction = annotation.action as? PDFActionRemoteGoTo,
-                       let currentURL = currentAction.url {
-                        let currentPath = currentURL.path
+                    if let currentAction = annotation.action as? PDFActionRemoteGoTo {
+                        let currentPath = currentAction.url.path
                         if currentPath.contains(foundFilename) {
                             needsRepair = false
                         }
