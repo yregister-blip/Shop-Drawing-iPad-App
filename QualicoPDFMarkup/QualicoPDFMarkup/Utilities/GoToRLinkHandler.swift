@@ -31,6 +31,12 @@ struct RawLinkData {
 
 class GoToRLinkHandler {
 
+    // MARK: - Persistence Key
+
+    /// Custom key used to store the target filename directly in the annotation dictionary.
+    /// This survives PDFKit saving even if the Action dictionary gets mangled or sanitized.
+    private static let kQualicoTargetFileKey = PDFAnnotationKey(rawValue: "QualicoTargetFile")
+
     // MARK: - Raw Link Cache
 
     /// Cache of raw link data extracted via CGPDFDocument, keyed by "pageIndex_rectHash"
@@ -212,6 +218,14 @@ class GoToRLinkHandler {
     /// Uses aggressive strategies to find the filename even if PDFKit fails to parse the URL.
     static func extractTargetFilename(from annotation: PDFAnnotation) -> String? {
 
+        // STRATEGY 0: Persistence Key (The "Saved Data" Path)
+        // Checks our custom annotation key. This survives PDFKit serialization reliably.
+        if let savedFilename = annotation.value(forAnnotationKey: kQualicoTargetFileKey) as? String {
+            let cleaned = cleanFilename(savedFilename)
+            print("✅ STRATEGY 0 (Persistence): Found filename in custom key: \(cleaned)")
+            return cleaned
+        }
+
         // STRATEGY 1: Native PDFKit Action (The Happy Path)
         // Check if PDFKit successfully parsed a PDFActionRemoteGoTo with valid URL
         if let action = annotation.action as? PDFActionRemoteGoTo {
@@ -228,7 +242,7 @@ class GoToRLinkHandler {
         // the raw path often still exists in the debug description.
         if let action = annotation.action {
             let desc = String(describing: action)
-            print("🔍 STRATEGY 2: Checking action description: \(desc.prefix(200))...")
+            // print("🔍 STRATEGY 2: Checking action description: \(desc.prefix(200))...")
             if let match = extractFilenameFromDescription(desc) {
                 let cleaned = cleanFilename(match)
                 print("✅ STRATEGY 2 (Description): Found filename: \(cleaned)")
@@ -239,7 +253,7 @@ class GoToRLinkHandler {
         // STRATEGY 3: Recursive Dictionary Search (The "Buried Treasure" Path)
         // We recursively search the entire raw annotation dictionary for any string ending in .pdf
         let keys = annotation.annotationKeyValues
-        print("🔍 STRATEGY 3: Searching annotation keys: \(keys.keys)")
+        // print("🔍 STRATEGY 3: Searching annotation keys: \(keys.keys)")
         if let match = recursiveSearchForPDF(in: keys) {
             let cleaned = cleanFilename(match)
             print("✅ STRATEGY 3 (Recursive): Found filename: \(cleaned)")
@@ -277,7 +291,7 @@ class GoToRLinkHandler {
             }
         }
 
-        print("❌ All extraction strategies failed for annotation")
+        // print("❌ All extraction strategies failed for annotation")
         return nil
     }
 
@@ -301,6 +315,7 @@ class GoToRLinkHandler {
         for (key, value) in dict {
             // Log what we're examining
             let keyStr = String(describing: key)
+            if keyStr == "QualicoTargetFile" { continue } // Skip our own key if redundant
 
             // If String, check extension
             if let str = value as? String {
@@ -460,6 +475,15 @@ class GoToRLinkHandler {
 
                 // 1. Try to extract filename using our aggressive logic (including cache)
                 if let foundFilename = extractTargetFilename(from: annotation, on: page, in: document) {
+
+                    // CRITICAL FIX: ALWAYS Persist the filename to a custom key.
+                    // PDFKit frequently corrupts or sanitizes the Action dictionary when saving/reloading,
+                    // especially with relative GoToR paths. The custom key survives "dataRepresentation".
+                    let currentVal = annotation.value(forAnnotationKey: kQualicoTargetFileKey) as? String
+                    if currentVal != foundFilename {
+                        annotation.setValue(foundFilename, forAnnotationKey: kQualicoTargetFileKey)
+                        print("💾 Persisted filename to custom key: \(foundFilename)")
+                    }
 
                     // 2. Check if the existing action is already VALID
                     var isBroken = true
