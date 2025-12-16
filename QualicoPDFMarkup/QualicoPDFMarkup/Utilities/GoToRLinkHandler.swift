@@ -21,6 +21,20 @@ struct GoToRLinkInfo {
 
 class GoToRLinkHandler {
 
+    // MARK: - Safe URL Access
+
+    /// Safely extracts URL from PDFActionRemoteGoTo without crashing on nil NSURL
+    private static func safeURL(from action: PDFActionRemoteGoTo) -> URL? {
+        // Use performSelector to safely access URL - avoids crash when underlying NSURL is nil
+        let urlSelector = NSSelectorFromString("url")
+        guard action.responds(to: urlSelector),
+              let result = action.perform(urlSelector),
+              let url = result.takeUnretainedValue() as? URL else {
+            return nil
+        }
+        return url
+    }
+
     // MARK: - Link Detection
 
     /// Checks if an annotation has a valid GoToR action (link to external file)
@@ -31,9 +45,10 @@ class GoToRLinkHandler {
     /// Extracts the target filename from a GoToR link annotation
     static func extractTargetFilename(from annotation: PDFAnnotation) -> String? {
 
-        // 1. Check Native Action (Fastest)
-        if let action = annotation.action as? PDFActionRemoteGoTo {
-            return action.url.lastPathComponent
+        // 1. Check Native Action (Fastest) - use safe accessor to avoid nil NSURL crash
+        if let action = annotation.action as? PDFActionRemoteGoTo,
+           let url = safeURL(from: action) {
+            return url.lastPathComponent
         }
 
         // 2. Brute Force Dictionary Parsing
@@ -146,10 +161,11 @@ class GoToRLinkHandler {
                 // 1. Try to find the filename using our brute force method
                 if let foundFilename = extractTargetFilename(from: annotation) {
 
-                    // 2. Check if the existing action is already valid
+                    // 2. Check if the existing action is already valid - use safe accessor
                     var needsRepair = true
-                    if let currentAction = annotation.action as? PDFActionRemoteGoTo {
-                        let currentPath = currentAction.url.path
+                    if let currentAction = annotation.action as? PDFActionRemoteGoTo,
+                       let currentURL = safeURL(from: currentAction) {
+                        let currentPath = currentURL.path
                         if currentPath.contains(foundFilename) {
                             needsRepair = false
                         }
