@@ -5,11 +5,12 @@
 //  Handles GoToR (Go To Remote file) PDF hyperlinks
 //  These links reference external PDF files and are not natively supported by PDFKit
 //
-//  Uses "Scorched Earth" extraction strategies to handle Bluebeam's non-standard formats
+//  Uses CGPDFDocument to access raw PDF data that PDFKit's high-level API destroys
 //
 
 import Foundation
 import PDFKit
+import CoreGraphics
 
 /// Information about a GoToR link extracted from PDF annotation
 struct GoToRLinkInfo {
@@ -21,13 +22,191 @@ struct GoToRLinkInfo {
     let rect: CGRect
 }
 
+/// Stores pre-extracted link data from raw PDF parsing
+struct RawLinkData {
+    let rect: CGRect
+    let targetFilename: String
+    let pageIndex: Int
+}
+
 class GoToRLinkHandler {
+
+    // MARK: - Raw Link Cache
+
+    /// Cache of raw link data extracted via CGPDFDocument, keyed by "pageIndex_rectHash"
+    private static var rawLinkCache: [String: RawLinkData] = [:]
+
+    /// Creates a cache key from page index and rect
+    private static func cacheKey(pageIndex: Int, rect: CGRect) -> String {
+        // Use rounded values to handle floating point imprecision
+        let x = Int(rect.origin.x)
+        let y = Int(rect.origin.y)
+        let w = Int(rect.size.width)
+        let h = Int(rect.size.height)
+        return "\(pageIndex)_\(x)_\(y)_\(w)_\(h)"
+    }
+
+    /// Pre-extracts all GoToR links from a document using CGPDFDocument (raw access)
+    /// Call this immediately after loading the PDF to populate the cache
+    static func preExtractLinks(from document: PDFDocument) {
+        rawLinkCache.removeAll()
+
+        guard let cgDocument = document.documentRef else {
+            print("⚠️ CGPDFDocument: Could not get document reference")
+            return
+        }
+
+        let pageCount = CGPDFDocumentGetNumberOfPages(cgDocument)
+        print("📚 CGPDFDocument: Scanning \(pageCount) pages for GoToR links...")
+
+        for pageIndex in 1...pageCount {
+            guard let cgPage = CGPDFDocumentGetPage(cgDocument, pageIndex) else { continue }
+
+            let pageDictionary = CGPDFPageGetDictionary(cgPage)
+            guard let pageDictionary = pageDictionary else { continue }
+
+            // Get Annots array from page
+            var annotsArray: CGPDFArrayRef?
+            if CGPDFDictionaryGetArray(pageDictionary, "Annots", &annotsArray), let annots = annotsArray {
+                let annotCount = CGPDFArrayGetCount(annots)
+
+                for i in 0..<annotCount {
+                    var annotDict: CGPDFDictionaryRef?
+                    if CGPDFArrayGetDictionary(annots, i, &annotDict), let dict = annotDict {
+                        if let linkData = extractRawLinkData(from: dict, pageIndex: pageIndex - 1) {
+                            let key = cacheKey(pageIndex: pageIndex - 1, rect: linkData.rect)
+                            rawLinkCache[key] = linkData
+                            print("✅ CGPDFDocument: Cached link on p\(pageIndex) -> \(linkData.targetFilename)")
+                        }
+                    }
+                }
+            }
+        }
+
+        print("📚 CGPDFDocument: Extracted \(rawLinkCache.count) GoToR links")
+    }
+
+    /// Extracts raw link data from a CGPDFDictionary annotation
+    private static func extractRawLinkData(from annotDict: CGPDFDictionaryRef, pageIndex: Int) -> RawLinkData? {
+        // Check if this is a Link annotation
+        var subtypeRef: UnsafePointer<CChar>?
+        if CGPDFDictionaryGetName(annotDict, "Subtype", &subtypeRef), let subtype = subtypeRef {
+            let subtypeStr = String(cString: subtype)
+            guard subtypeStr == "Link" else { return nil }
+        } else {
+            return nil
+        }
+
+        // Get the Rect
+        var rectArray: CGPDFArrayRef?
+        guard CGPDFDictionaryGetArray(annotDict, "Rect", &rectArray), let rect = rectArray else {
+            return nil
+        }
+
+        var x1: CGPDFReal = 0, y1: CGPDFReal = 0, x2: CGPDFReal = 0, y2: CGPDFReal = 0
+        CGPDFArrayGetNumber(rect, 0, &x1)
+        CGPDFArrayGetNumber(rect, 1, &y1)
+        CGPDFArrayGetNumber(rect, 2, &x2)
+        CGPDFArrayGetNumber(rect, 3, &y2)
+        let annotRect = CGRect(x: min(x1, x2), y: min(y1, y2),
+                               width: abs(x2 - x1), height: abs(y2 - y1))
+
+        // Get the Action dictionary (/A)
+        var actionDict: CGPDFDictionaryRef?
+        guard CGPDFDictionaryGetDictionary(annotDict, "A", &actionDict), let action = actionDict else {
+            return nil
+        }
+
+        // Check if it's a GoToR action
+        var actionTypeRef: UnsafePointer<CChar>?
+        if CGPDFDictionaryGetName(action, "S", &actionTypeRef), let actionType = actionTypeRef {
+            let actionTypeStr = String(cString: actionType)
+            guard actionTypeStr == "GoToR" else { return nil }
+        } else {
+            return nil
+        }
+
+        // Extract the file specification from /F
+        if let filename = extractFilenameFromAction(action) {
+            return RawLinkData(rect: annotRect, targetFilename: filename, pageIndex: pageIndex)
+        }
+
+        return nil
+    }
+
+    /// Extracts filename from a GoToR action's /F key
+    private static func extractFilenameFromAction(_ actionDict: CGPDFDictionaryRef) -> String? {
+        // Try /F as string first (simple file spec)
+        var stringRef: CGPDFStringRef?
+        if CGPDFDictionaryGetString(actionDict, "F", &stringRef), let str = stringRef {
+            if let cfString = CGPDFStringCopyTextString(str) {
+                let filename = cfString as String
+                print("   📄 CGPDFDocument: Found /F string: \(filename)")
+                return cleanFilename(filename)
+            }
+        }
+
+        // Try /F as dictionary (full file spec)
+        var fileSpecDict: CGPDFDictionaryRef?
+        if CGPDFDictionaryGetDictionary(actionDict, "F", &fileSpecDict), let fileSpec = fileSpecDict {
+            // Try /UF first (Unicode filename), then /F
+            for key in ["UF", "F"] {
+                var innerStringRef: CGPDFStringRef?
+                if CGPDFDictionaryGetString(fileSpec, key, &innerStringRef), let str = innerStringRef {
+                    if let cfString = CGPDFStringCopyTextString(str) {
+                        let filename = cfString as String
+                        print("   📄 CGPDFDocument: Found /\(key) in fileSpec: \(filename)")
+                        return cleanFilename(filename)
+                    }
+                }
+            }
+        }
+
+        // Try /F as name (rare but possible)
+        var nameRef: UnsafePointer<CChar>?
+        if CGPDFDictionaryGetName(actionDict, "F", &nameRef), let name = nameRef {
+            let filename = String(cString: name)
+            print("   📄 CGPDFDocument: Found /F name: \(filename)")
+            return cleanFilename(filename)
+        }
+
+        return nil
+    }
 
     // MARK: - Link Detection
 
     /// Checks if an annotation has a valid GoToR action (link to external file)
     static func hasGoToRAction(_ annotation: PDFAnnotation) -> Bool {
         return extractTargetFilename(from: annotation) != nil
+    }
+
+    /// Extracts the target filename from a GoToR link annotation using the annotation's page
+    static func extractTargetFilename(from annotation: PDFAnnotation, on page: PDFPage, in document: PDFDocument) -> String? {
+        // First try the cache (populated by CGPDFDocument extraction)
+        if let pageIndex = document.index(for: page) as Int? {
+            let key = cacheKey(pageIndex: pageIndex, rect: annotation.bounds)
+            if let cached = rawLinkCache[key] {
+                print("✅ CACHE HIT: Found filename: \(cached.targetFilename)")
+                return cached.targetFilename
+            }
+
+            // Try nearby rects (in case of slight coordinate differences)
+            for (cachedKey, data) in rawLinkCache where data.pageIndex == pageIndex {
+                // Check if rects are close enough (within 5 points)
+                let cachedRect = data.rect
+                let annotRect = annotation.bounds
+                if abs(cachedRect.origin.x - annotRect.origin.x) < 5 &&
+                   abs(cachedRect.origin.y - annotRect.origin.y) < 5 &&
+                   abs(cachedRect.width - annotRect.width) < 5 &&
+                   abs(cachedRect.height - annotRect.height) < 5 {
+                    print("✅ CACHE FUZZY MATCH: Found filename: \(data.targetFilename)")
+                    return data.targetFilename
+                }
+            }
+        }
+
+        // Fall back to other strategies if cache miss
+        return extractTargetFilename(from: annotation)
     }
 
     /// Extracts the target filename from a GoToR link annotation
@@ -269,6 +448,9 @@ class GoToRLinkHandler {
 
     @discardableResult
     static func fixBrokenBluebeamLinks(in document: PDFDocument) -> Int {
+        // First, pre-extract all links using CGPDFDocument
+        preExtractLinks(from: document)
+
         var fixedCount = 0
 
         for pageIndex in 0..<document.pageCount {
@@ -277,8 +459,8 @@ class GoToRLinkHandler {
             for annotation in page.annotations {
                 guard annotation.type == "Link" || annotation.type == "Widget" else { continue }
 
-                // 1. Try to extract filename using our aggressive logic
-                if let foundFilename = extractTargetFilename(from: annotation) {
+                // 1. Try to extract filename using our aggressive logic (including cache)
+                if let foundFilename = extractTargetFilename(from: annotation, on: page, in: document) {
 
                     // 2. Check if the existing action is already VALID
                     var isBroken = true
@@ -310,6 +492,32 @@ class GoToRLinkHandler {
         }
 
         return fixedCount
+    }
+
+    // MARK: - Cache Access for Overlay
+
+    /// Returns the cached filename for an annotation if available
+    static func getCachedFilename(for annotation: PDFAnnotation, on page: PDFPage, in document: PDFDocument) -> String? {
+        guard let pageIndex = document.index(for: page) as Int? else { return nil }
+
+        let key = cacheKey(pageIndex: pageIndex, rect: annotation.bounds)
+        if let cached = rawLinkCache[key] {
+            return cached.targetFilename
+        }
+
+        // Try fuzzy match
+        for (_, data) in rawLinkCache where data.pageIndex == pageIndex {
+            let cachedRect = data.rect
+            let annotRect = annotation.bounds
+            if abs(cachedRect.origin.x - annotRect.origin.x) < 5 &&
+               abs(cachedRect.origin.y - annotRect.origin.y) < 5 &&
+               abs(cachedRect.width - annotRect.width) < 5 &&
+               abs(cachedRect.height - annotRect.height) < 5 {
+                return data.targetFilename
+            }
+        }
+
+        return nil
     }
 
     // MARK: - Debug Helper
