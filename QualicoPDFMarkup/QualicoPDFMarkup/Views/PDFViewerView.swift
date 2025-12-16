@@ -462,6 +462,8 @@ struct PDFKitView: UIViewRepresentable {
         panGesture.maximumNumberOfTouches = 1
         pdfView.addGestureRecognizer(panGesture)
 
+        // Store references for gesture management
+        context.coordinator.drawingGestureRecognizer = panGesture
         context.coordinator.pdfView = pdfView
 
         return pdfView
@@ -481,6 +483,39 @@ struct PDFKitView: UIViewRepresentable {
 
         // Update hyperlink highlighting
         context.coordinator.updateHyperlinkOverlay(show: showHyperlinks, in: pdfView)
+
+        // --- GESTURE MANAGEMENT ---
+        // Separate drawing gestures from navigation gestures to prevent
+        // accidental document dragging when drawing while zoomed in
+        let isDrawing = (selectedTool == .pen || selectedTool == .highlight)
+
+        // 1. Enable drawing gesture only when using drawing tools
+        context.coordinator.drawingGestureRecognizer?.isEnabled = isDrawing
+
+        // 2. Manage scroll gesture: require 2-finger pan when drawing
+        //    to prevent single-finger draws from scrolling the document
+        if let scrollView = findScrollView(in: pdfView) {
+            if isDrawing {
+                // Drawing mode: 1 finger draws, 2 fingers pan
+                scrollView.panGestureRecognizer.minimumNumberOfTouches = 2
+            } else {
+                // View mode: 1 finger pans normally
+                scrollView.panGestureRecognizer.minimumNumberOfTouches = 1
+            }
+        }
+    }
+
+    /// Helper to find the internal UIScrollView within PDFView
+    private func findScrollView(in view: UIView) -> UIScrollView? {
+        if let scrollView = view as? UIScrollView {
+            return scrollView
+        }
+        for subview in view.subviews {
+            if let found = findScrollView(in: subview) {
+                return found
+            }
+        }
+        return nil
     }
 
     func makeCoordinator() -> Coordinator {
@@ -504,6 +539,7 @@ struct PDFKitView: UIViewRepresentable {
         var onGoToRLinkTapped: ((String) -> Void)?
 
         weak var pdfView: PDFView?
+        var drawingGestureRecognizer: UIPanGestureRecognizer?  // Reference for gesture management
         var selectedTool: AnnotationTool
         var selectedColor: DrawingColor
         var selectedLineWidth: LineWidth
