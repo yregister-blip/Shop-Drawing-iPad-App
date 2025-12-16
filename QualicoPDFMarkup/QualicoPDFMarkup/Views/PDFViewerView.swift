@@ -1381,7 +1381,7 @@ class PDFViewerViewModel: ObservableObject {
                         } else if let namedAction = action as? PDFActionNamed {
                             print("   Named Action: \(namedAction.name.rawValue)")
                         } else if let remoteAction = action as? PDFActionRemoteGoTo {
-                            print("   RemoteGoTo URL: \(remoteAction.url?.absoluteString ?? "nil")")
+                            print("   RemoteGoTo URL: \(remoteAction.url.absoluteString)")
                             print("   RemoteGoTo PageIndex: \(remoteAction.pageIndex)")
                         }
                     } else {
