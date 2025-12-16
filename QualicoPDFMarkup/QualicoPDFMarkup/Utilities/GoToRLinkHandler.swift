@@ -37,9 +37,7 @@ class GoToRLinkHandler {
         if let action = annotation.action {
             // Try PDFActionRemoteGoTo (if available in this iOS version)
             if let remoteAction = action as? PDFActionRemoteGoTo {
-                if let url = remoteAction.url {
-                    return url.lastPathComponent
-                }
+                return remoteAction.url.lastPathComponent
             }
         }
 
