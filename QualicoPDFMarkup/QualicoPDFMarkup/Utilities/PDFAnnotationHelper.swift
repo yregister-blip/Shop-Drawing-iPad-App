@@ -75,6 +75,39 @@ enum PDFAnnotationHelper {
         return annotation
     }
 
+    /// Add a dynamic text stamp (Fit / QC Fit)
+    static func addDynamicStamp(
+        to page: PDFPage,
+        at screenPoint: CGPoint,
+        in pdfView: PDFView,
+        text: String
+    ) -> PDFAnnotation? {
+        let pagePoint = pdfView.convert(screenPoint, to: page)
+
+        // Calculate dynamic size based on text
+        let font = UIFont.boldSystemFont(ofSize: 20) // 16-24pt range, 20 is a good middle ground
+        let attributes: [NSAttributedString.Key: Any] = [.font: font]
+        let textSize = (text as NSString).size(withAttributes: attributes)
+
+        // Add padding for border and margins
+        let size = CGSize(width: textSize.width + 20, height: textSize.height + 16)
+
+        let stampOrigin = CGPoint(
+            x: pagePoint.x - size.width / 2,
+            y: pagePoint.y - size.height / 2
+        )
+
+        guard let stampImage = createDynamicStampImage(text: text, size: size, font: font) else {
+            return nil
+        }
+
+        let bounds = CGRect(origin: stampOrigin, size: size)
+        let annotation = ImageStampAnnotation(bounds: bounds, image: stampImage)
+
+        page.addAnnotation(annotation)
+        return annotation
+    }
+
     static func createStampImage(type: StampType) -> UIImage? {
         // For POC, create a simple text-based stamp
         // In production, would load from Resources/Stamps/
@@ -139,6 +172,36 @@ enum PDFAnnotationHelper {
         }
 
         return image
+    }
+
+    /// Create dynamic text stamp image (Fit / QC Fit)
+    static func createDynamicStampImage(text: String, size: CGSize, font: UIFont) -> UIImage? {
+        let renderer = UIGraphicsImageRenderer(size: size)
+
+        return renderer.image { context in
+            // Draw border with Qualico branding
+            QualicoBranding.stampColor().setStroke()
+            let rect = CGRect(origin: .zero, size: size).insetBy(dx: 2, dy: 2)
+            let path = UIBezierPath(rect: rect)
+            path.lineWidth = 3.0
+            path.stroke()
+
+            // Draw text
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: font,
+                .foregroundColor: QualicoBranding.stampColor()
+            ]
+
+            let textSize = (text as NSString).size(withAttributes: attributes)
+            let textRect = CGRect(
+                x: (size.width - textSize.width) / 2,
+                y: (size.height - textSize.height) / 2,
+                width: textSize.width,
+                height: textSize.height
+            )
+
+            (text as NSString).draw(in: textRect, withAttributes: attributes)
+        }
     }
 
     // MARK: - Pen/Ink Annotations
