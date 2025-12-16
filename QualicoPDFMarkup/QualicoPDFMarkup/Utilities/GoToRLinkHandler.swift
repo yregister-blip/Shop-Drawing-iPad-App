@@ -244,9 +244,9 @@ class GoToRLinkHandler {
 
     // MARK: - Repair Logic
 
-    /// Scans for "raw" GoToR links (dictionaries without native actions) and converts them
-    /// into proper PDFActionRemoteGoTo objects that PDFKit can handle and save correctly.
-    /// This fixes Bluebeam-created links that PDFKit doesn't natively recognize.
+    /// Scans for Bluebeam GoToR links and forces them into native PDFActionRemoteGoTo objects.
+    /// This is aggressive - if we find a filename in the dictionary, we verify the existing action
+    /// actually points to it. If not (or if the action is empty/broken), we replace it.
     /// Returns the number of links fixed.
     @discardableResult
     static func fixBrokenBluebeamLinks(in document: PDFDocument) -> Int {
@@ -256,31 +256,50 @@ class GoToRLinkHandler {
             guard let page = document.page(at: pageIndex) else { continue }
 
             for annotation in page.annotations {
-                // We only care about Links or Widgets (Bluebeam sometimes uses Widgets)
+                // We only care about Links or Widgets
                 guard annotation.type == "Link" || annotation.type == "Widget" else { continue }
 
-                // If it already has a native PDFActionRemoteGoTo action, leave it alone
-                if annotation.action is PDFActionRemoteGoTo { continue }
+                // 1. Try to find the target filename from the raw dictionary (Method 2, 3, 4)
+                // We intentionally skip Method 1 (checking the Action) here because we want to know
+                // what the dictionary *says* the file is, not what PDFKit *thinks* it is.
+                var targetFilename: String?
 
-                // Check if this is a "raw" Bluebeam link by parsing the dictionary
-                if let targetFilename = extractTargetFilename(from: annotation) {
-                    // Only fix if there's no existing native action (raw dictionary link)
-                    // We detect this by checking if we found the filename from dictionary parsing
-                    // but the annotation doesn't have a proper action set
-                    let hasNativeAction = annotation.action != nil &&
-                        (annotation.action is PDFActionRemoteGoTo ||
-                         annotation.action is PDFActionURL ||
-                         annotation.action is PDFActionGoTo)
+                // Check /A dictionary directly
+                if let annotDict = annotation.value(forAnnotationKey: PDFAnnotationKey(rawValue: "/A")) {
+                    targetFilename = extractFilenameFromActionDict(annotDict)
+                }
 
-                    if !hasNativeAction {
-                        print("🔧 Fixing broken Bluebeam link to: \(targetFilename) on page \(pageIndex + 1)")
+                // If not found, check /F directly
+                if targetFilename == nil, let fileSpec = annotation.value(forAnnotationKey: PDFAnnotationKey(rawValue: "/F")) {
+                    targetFilename = extractFilenameFromFileSpec(fileSpec)
+                }
 
-                        // Create a proper URL
-                        // We use URL(string:) to attempt to preserve relative paths
-                        // If that fails, we fall back to a file URL
-                        let url = URL(string: targetFilename) ?? URL(fileURLWithPath: targetFilename)
+                // 2. If we found a filename in the dictionary, we MUST ensure the action is valid.
+                if let foundFilename = targetFilename {
 
-                        // Extract destination page if available
+                    // Check if the current action is already valid and points to this file
+                    var needsRepair = true
+
+                    if let currentAction = annotation.action as? PDFActionRemoteGoTo,
+                       let currentURL = currentAction.url {
+                        // If the existing action has a URL that matches our filename, it's fine.
+                        // We check for suffix because foundFilename might be relative
+                        if currentURL.absoluteString.hasSuffix(foundFilename) ||
+                           currentURL.path.hasSuffix(foundFilename) {
+                            needsRepair = false
+                        }
+                    }
+
+                    if needsRepair {
+                        print("🔧 Fixing Bluebeam link on p\(pageIndex + 1) -> \(foundFilename)")
+
+                        // Create a proper URL.
+                        // Bluebeam links are often relative. We create a URL that preserves the string.
+                        // Note: We use fileURLWithPath to ensure it's a valid file scheme URL,
+                        // which PDFActionRemoteGoTo requires.
+                        let url = URL(fileURLWithPath: foundFilename)
+
+                        // Extract destination page if available from the raw dictionary
                         var destPageIndex = 0
                         if let actionDict = annotation.value(forAnnotationKey: PDFAnnotationKey(rawValue: "/A")) as? [String: Any],
                            let dest = actionDict["D"] as? [Any],
@@ -288,20 +307,19 @@ class GoToRLinkHandler {
                             destPageIndex = pageNum
                         }
 
-                        // Create the native action
-                        let action = PDFActionRemoteGoTo(pageIndex: destPageIndex, at: CGPoint.zero, fileURL: url)
-                        annotation.action = action
+                        // Force overwrite the action
+                        let newAction = PDFActionRemoteGoTo(pageIndex: destPageIndex, at: CGPoint.zero, fileURL: url)
+                        annotation.action = newAction
                         fixedCount += 1
-                        print("   ✅ Created PDFActionRemoteGoTo for: \(targetFilename)")
                     }
                 }
             }
         }
 
         if fixedCount > 0 {
-            print("✅ Repaired \(fixedCount) Bluebeam links into native PDFActions.")
+            print("✅ Repaired \(fixedCount) Bluebeam links.")
         } else {
-            print("ℹ️ No broken Bluebeam links found that needed repair.")
+            print("ℹ️ No broken links found (or all were already valid).")
         }
 
         return fixedCount
