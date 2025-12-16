@@ -133,6 +133,11 @@ struct PDFViewerView: View {
                                 selectedAnnotation = annotation
                                 selectedAnnotationPage = page
                             }
+                        },
+                        onGoToRLinkTapped: { targetFilename in
+                            Task {
+                                await viewModel.navigateToLinkedFile(targetFilename)
+                            }
                         }
                     )
                 }
@@ -429,6 +434,7 @@ struct PDFKitView: UIViewRepresentable {
     let onTextTap: (CGPoint, PDFView) -> Void
     let onDrawingComplete: (DrawingPath, PDFView) -> Void
     var onAnnotationSelected: ((PDFAnnotation?, PDFPage?) -> Void)?
+    var onGoToRLinkTapped: ((String) -> Void)?  // Callback for GoToR link navigation
 
     func makeUIView(context: Context) -> PDFView {
         let pdfView = PDFView()
@@ -465,6 +471,7 @@ struct PDFKitView: UIViewRepresentable {
         context.coordinator.selectedColor = selectedColor
         context.coordinator.selectedLineWidth = selectedLineWidth
         context.coordinator.onAnnotationSelected = onAnnotationSelected
+        context.coordinator.onGoToRLinkTapped = onGoToRLinkTapped
 
         // Update hyperlink highlighting
         context.coordinator.updateHyperlinkOverlay(show: showHyperlinks, in: pdfView)
@@ -476,6 +483,7 @@ struct PDFKitView: UIViewRepresentable {
             onTextTap: onTextTap,
             onDrawingComplete: onDrawingComplete,
             onAnnotationSelected: onAnnotationSelected,
+            onGoToRLinkTapped: onGoToRLinkTapped,
             selectedTool: selectedTool,
             selectedColor: selectedColor,
             selectedLineWidth: selectedLineWidth
@@ -487,6 +495,7 @@ struct PDFKitView: UIViewRepresentable {
         let onTextTap: (CGPoint, PDFView) -> Void
         let onDrawingComplete: (DrawingPath, PDFView) -> Void
         var onAnnotationSelected: ((PDFAnnotation?, PDFPage?) -> Void)?
+        var onGoToRLinkTapped: ((String) -> Void)?
 
         weak var pdfView: PDFView?
         var selectedTool: AnnotationTool
@@ -505,6 +514,7 @@ struct PDFKitView: UIViewRepresentable {
             onTextTap: @escaping (CGPoint, PDFView) -> Void,
             onDrawingComplete: @escaping (DrawingPath, PDFView) -> Void,
             onAnnotationSelected: ((PDFAnnotation?, PDFPage?) -> Void)?,
+            onGoToRLinkTapped: ((String) -> Void)?,
             selectedTool: AnnotationTool,
             selectedColor: DrawingColor,
             selectedLineWidth: LineWidth
@@ -513,6 +523,7 @@ struct PDFKitView: UIViewRepresentable {
             self.onTextTap = onTextTap
             self.onDrawingComplete = onDrawingComplete
             self.onAnnotationSelected = onAnnotationSelected
+            self.onGoToRLinkTapped = onGoToRLinkTapped
             self.selectedTool = selectedTool
             self.selectedColor = selectedColor
             self.selectedLineWidth = selectedLineWidth
@@ -540,7 +551,16 @@ struct PDFKitView: UIViewRepresentable {
 
                     // Check for Link OR Widget (Bluebeam sometimes uses Widgets for complex links)
                     if hitAnnotation.type == "Link" || hitAnnotation.type == "Widget" {
-                        print("🔗 Link/Widget detected - Passing control to PDFKit")
+                        // First check if this is a GoToR link (external file reference)
+                        if let targetFilename = GoToRLinkHandler.extractTargetFilename(from: hitAnnotation) {
+                            print("🔗 GoToR Link detected - Target file: \(targetFilename)")
+                            // Call the callback to handle navigation
+                            onGoToRLinkTapped?(targetFilename)
+                            return
+                        }
+
+                        // For standard links, let PDFKit handle them
+                        print("🔗 Standard Link/Widget detected - Passing control to PDFKit")
                         return
                     }
                 }
@@ -732,13 +752,18 @@ class HyperlinkOverlayView: UIView {
                 // Only draw if visible
                 guard viewRect.intersects(visibleRect) else { continue }
 
-                // Determine highlight color based on link status
-                let hasDestination = annotation.url != nil ||
-                                   annotation.destination != nil ||
-                                   annotation.action != nil
+                // Use GoToRLinkHandler to check for ANY destination (including GoToR links)
+                let hasDestination = GoToRLinkHandler.hasAnyDestination(annotation)
 
-                if hasDestination {
-                    // Green for working links
+                // Check if it's a GoToR link specifically (blue highlight)
+                let isGoToRLink = GoToRLinkHandler.hasGoToRAction(annotation)
+
+                if isGoToRLink {
+                    // Blue for GoToR (external file) links
+                    context.setFillColor(UIColor.systemBlue.withAlphaComponent(0.3).cgColor)
+                    context.setStrokeColor(UIColor.systemBlue.cgColor)
+                } else if hasDestination {
+                    // Green for working links (URL or internal)
                     context.setFillColor(UIColor.systemGreen.withAlphaComponent(0.3).cgColor)
                     context.setStrokeColor(UIColor.systemGreen.cgColor)
                 } else {
@@ -762,18 +787,30 @@ class HyperlinkOverlayView: UIView {
                     height: indicatorSize
                 )
 
-                if hasDestination {
+                if isGoToRLink {
+                    context.setFillColor(UIColor.systemBlue.cgColor)
+                } else if hasDestination {
                     context.setFillColor(UIColor.systemGreen.cgColor)
                 } else {
                     context.setFillColor(UIColor.systemRed.cgColor)
                 }
                 context.fillEllipse(in: indicatorRect)
 
-                // Draw checkmark or X
+                // Draw icon indicator
                 context.setStrokeColor(UIColor.white.cgColor)
                 context.setLineWidth(1.5)
 
-                if hasDestination {
+                if isGoToRLink {
+                    // Arrow pointing right (external file)
+                    let arrowPath = UIBezierPath()
+                    arrowPath.move(to: CGPoint(x: indicatorRect.minX + 3, y: indicatorRect.midY))
+                    arrowPath.addLine(to: CGPoint(x: indicatorRect.maxX - 3, y: indicatorRect.midY))
+                    arrowPath.move(to: CGPoint(x: indicatorRect.maxX - 5, y: indicatorRect.midY - 3))
+                    arrowPath.addLine(to: CGPoint(x: indicatorRect.maxX - 3, y: indicatorRect.midY))
+                    arrowPath.addLine(to: CGPoint(x: indicatorRect.maxX - 5, y: indicatorRect.midY + 3))
+                    context.addPath(arrowPath.cgPath)
+                    context.strokePath()
+                } else if hasDestination {
                     // Checkmark
                     let checkPath = UIBezierPath()
                     checkPath.move(to: CGPoint(x: indicatorRect.minX + 3, y: indicatorRect.midY))
@@ -1217,6 +1254,65 @@ class PDFViewerViewModel: ObservableObject {
         await loadPDF()
     }
 
+    /// Navigate to a linked PDF file by filename (from GoToR hyperlinks)
+    func navigateToLinkedFile(_ targetFilename: String) async {
+        guard let context = folderContext else {
+            print("⚠️ No folder context available for navigation")
+            errorMessage = "Cannot navigate: folder context not available"
+            showSaveAlert = true
+            saveResultMessage = "Unable to open linked file - no folder context"
+            return
+        }
+
+        print("🔗 Searching for linked file: \(targetFilename)")
+
+        // Search for the file in the current folder
+        // Try exact match first
+        if let matchingFile = context.files.first(where: { $0.name == targetFilename }) {
+            print("✅ Found exact match: \(matchingFile.name)")
+            await navigateToFile(matchingFile)
+            return
+        }
+
+        // Try case-insensitive match
+        let lowercaseTarget = targetFilename.lowercased()
+        if let matchingFile = context.files.first(where: { $0.name.lowercased() == lowercaseTarget }) {
+            print("✅ Found case-insensitive match: \(matchingFile.name)")
+            await navigateToFile(matchingFile)
+            return
+        }
+
+        // Try partial match (target filename might not include full path)
+        let targetBasename = (targetFilename as NSString).lastPathComponent.lowercased()
+        if let matchingFile = context.files.first(where: {
+            $0.name.lowercased() == targetBasename ||
+            $0.name.lowercased().contains(targetBasename)
+        }) {
+            print("✅ Found partial match: \(matchingFile.name)")
+            await navigateToFile(matchingFile)
+            return
+        }
+
+        // Try matching without file extension
+        let targetWithoutExt = (targetBasename as NSString).deletingPathExtension
+        if let matchingFile = context.files.first(where: {
+            let nameWithoutExt = ($0.name as NSString).deletingPathExtension.lowercased()
+            return nameWithoutExt == targetWithoutExt || nameWithoutExt.contains(targetWithoutExt)
+        }) {
+            print("✅ Found match without extension: \(matchingFile.name)")
+            await navigateToFile(matchingFile)
+            return
+        }
+
+        // File not found in current folder
+        print("❌ Linked file not found in current folder: \(targetFilename)")
+        print("📁 Available files: \(context.files.map { $0.name })")
+
+        errorMessage = "Linked file not found"
+        saveResultMessage = "Could not find '\(targetFilename)' in the current folder.\n\nThe linked file may be in a different folder or have a different name."
+        showSaveAlert = true
+    }
+
     var canNavigateNext: Bool {
         folderContext?.hasNext ?? false
     }
@@ -1237,6 +1333,7 @@ class PDFViewerViewModel: ObservableObject {
         var linksWithDestinations = 0
         var linksWithURLs = 0
         var linksWithActions = 0
+        var goToRLinks = 0
 
         print("📄 ========== HYPERLINK ANALYSIS ==========")
         print("📄 Document: \(currentFile.name)")
@@ -1283,14 +1380,30 @@ class PDFViewerViewModel: ObservableObject {
                             print("   GoTo Destination: \(goToAction.destination.page?.label ?? "nil")")
                         } else if let namedAction = action as? PDFActionNamed {
                             print("   Named Action: \(namedAction.name.rawValue)")
+                        } else if let remoteAction = action as? PDFActionRemoteGoTo {
+                            print("   RemoteGoTo URL: \(remoteAction.url?.absoluteString ?? "nil")")
+                            print("   RemoteGoTo PageIndex: \(remoteAction.pageIndex)")
                         }
                     } else {
                         print("   ❌ Action: nil")
                     }
 
+                    // Check for GoToR link (external file) using our custom handler
+                    if let targetFile = GoToRLinkHandler.extractTargetFilename(from: annotation) {
+                        goToRLinks += 1
+                        print("   ✅ GoToR Target File: \(targetFile)")
+                    }
+
                     // Log all annotation dictionary keys for debugging
                     if let annotDict = annotation.annotationKeyValues as? [PDFAnnotationKey: Any] {
                         print("   Keys: \(annotDict.keys.map { $0.rawValue })")
+
+                        // Log the full action dictionary for debugging GoToR links
+                        for (key, value) in annotDict {
+                            if key.rawValue.contains("A") || key.rawValue == "/A" {
+                                print("   Action Dict [\(key.rawValue)]: \(value)")
+                            }
+                        }
                     }
                 }
 
@@ -1303,6 +1416,10 @@ class PDFViewerViewModel: ObservableObject {
                     if let action = annotation.action {
                         print("   Action Type: \(type(of: action))")
                     }
+                    // Check for GoToR in widgets too
+                    if let targetFile = GoToRLinkHandler.extractTargetFilename(from: annotation) {
+                        print("   ✅ GoToR Target File: \(targetFile)")
+                    }
                 }
             }
         }
@@ -1313,6 +1430,7 @@ class PDFViewerViewModel: ObservableObject {
         print("📊 Links with URLs: \(linksWithURLs)")
         print("📊 Links with Destinations: \(linksWithDestinations)")
         print("📊 Links with Actions: \(linksWithActions)")
+        print("📊 GoToR Links (external files): \(goToRLinks)")
         print("📊 ===============================")
     }
 
