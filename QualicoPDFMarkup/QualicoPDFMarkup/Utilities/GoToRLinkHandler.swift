@@ -242,6 +242,74 @@ class GoToRLinkHandler {
         return false
     }
 
+    // MARK: - Repair Logic
+
+    /// Scans for "raw" GoToR links (dictionaries without native actions) and converts them
+    /// into proper PDFActionRemoteGoTo objects that PDFKit can handle and save correctly.
+    /// This fixes Bluebeam-created links that PDFKit doesn't natively recognize.
+    /// Returns the number of links fixed.
+    @discardableResult
+    static func fixBrokenBluebeamLinks(in document: PDFDocument) -> Int {
+        var fixedCount = 0
+
+        for pageIndex in 0..<document.pageCount {
+            guard let page = document.page(at: pageIndex) else { continue }
+
+            for annotation in page.annotations {
+                // We only care about Links or Widgets (Bluebeam sometimes uses Widgets)
+                guard annotation.type == "Link" || annotation.type == "Widget" else { continue }
+
+                // If it already has a native PDFActionRemoteGoTo action, leave it alone
+                if annotation.action is PDFActionRemoteGoTo { continue }
+
+                // Check if this is a "raw" Bluebeam link by parsing the dictionary
+                if let targetFilename = extractTargetFilename(from: annotation) {
+                    // Only fix if there's no existing native action (raw dictionary link)
+                    // We detect this by checking if we found the filename from dictionary parsing
+                    // but the annotation doesn't have a proper action set
+                    let hasNativeAction = annotation.action != nil &&
+                        (annotation.action is PDFActionRemoteGoTo ||
+                         annotation.action is PDFActionURL ||
+                         annotation.action is PDFActionGoTo)
+
+                    if !hasNativeAction {
+                        print("🔧 Fixing broken Bluebeam link to: \(targetFilename) on page \(pageIndex + 1)")
+
+                        // Create a proper URL
+                        // We use URL(string:) to attempt to preserve relative paths
+                        // If that fails, we fall back to a file URL
+                        let url = URL(string: targetFilename) ?? URL(fileURLWithPath: targetFilename)
+
+                        // Extract destination page if available
+                        var destPageIndex = 0
+                        if let actionDict = annotation.value(forAnnotationKey: PDFAnnotationKey(rawValue: "/A")) as? [String: Any],
+                           let dest = actionDict["D"] as? [Any],
+                           let pageNum = dest.first as? Int {
+                            destPageIndex = pageNum
+                        }
+
+                        // Create the native action
+                        if let action = PDFActionRemoteGoTo(url: url, pageIndex: destPageIndex, point: .zero) {
+                            annotation.action = action
+                            fixedCount += 1
+                            print("   ✅ Created PDFActionRemoteGoTo for: \(targetFilename)")
+                        } else {
+                            print("   ⚠️ Failed to create PDFActionRemoteGoTo for: \(targetFilename)")
+                        }
+                    }
+                }
+            }
+        }
+
+        if fixedCount > 0 {
+            print("✅ Repaired \(fixedCount) Bluebeam links into native PDFActions.")
+        } else {
+            print("ℹ️ No broken Bluebeam links found that needed repair.")
+        }
+
+        return fixedCount
+    }
+
     // MARK: - Debug Logging
 
     /// Logs detailed information about link annotations for debugging

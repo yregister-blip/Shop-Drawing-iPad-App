@@ -541,7 +541,8 @@ struct PDFKitView: UIViewRepresentable {
             let point = gesture.location(in: pdfView)
 
             // IMPROVED LINK DETECTION using PDFKit's native hit testing
-            if let page = pdfView.page(for: point, nearest: false) {
+            // Use nearest: true to help with fat-finger tapping on link areas
+            if let page = pdfView.page(for: point, nearest: true) {
                 let pagePoint = pdfView.convert(point, to: page)
 
                 // Use PDFKit's native hit testing
@@ -1017,8 +1018,13 @@ class PDFViewerViewModel: ObservableObject {
             originalETag = metadata.eTag
 
             if let document = PDFDocument(data: data) {
+                // FIX: Repair Bluebeam links immediately upon load
+                // This converts raw dictionaries to native PDFActions, enabling
+                // proper tap handling AND preventing corruption during save.
+                GoToRLinkHandler.fixBrokenBluebeamLinks(in: document)
+
                 pdfDocument = document
-                hasUnsavedChanges = false
+                hasUnsavedChanges = false  // Treat the repair as the "baseline" state
 
                 // Analyze hyperlinks in the document for debugging
                 analyzeHyperlinks(in: document)
