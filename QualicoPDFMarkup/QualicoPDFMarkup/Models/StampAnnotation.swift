@@ -12,6 +12,8 @@ enum StampType: String, Codable, CaseIterable, Hashable {
     case fabricated = "FABRICATED"
     case hold = "HOLD"
     case fitOnly = "FIT ONLY"
+    case fit = "FIT"         // Dynamic: Fit + ID + Date
+    case qcFit = "QC FIT"    // Dynamic: QC Fit + Inspector + Fit ID + Date
 
     var imageName: String {
         switch self {
@@ -21,7 +23,16 @@ enum StampType: String, Codable, CaseIterable, Hashable {
             return "hold"
         case .fitOnly:
             return "fit_only"
+        case .fit:
+            return "fit"
+        case .qcFit:
+            return "qc_fit"
         }
+    }
+
+    /// Returns true if the stamp content is generated dynamically based on user input/time
+    var isDynamic: Bool {
+        return self == .fit || self == .qcFit
     }
 }
 

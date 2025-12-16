@@ -27,6 +27,10 @@ struct PDFViewerView: View {
     @State private var selectedAnnotationPage: PDFPage? = nil
     @State private var showDeleteConfirmation = false
 
+    // Dynamic Stamp Inputs
+    @State private var tempFitterID = ""
+    @State private var tempInspectorName = ""
+
     private let edgeSwipeThreshold: CGFloat = 50
 
     init(file: DriveItem, folderContext: FolderContext?) {
@@ -243,6 +247,48 @@ struct PDFViewerView: View {
             }
         } message: {
             Text("Enter text to add to the PDF")
+        }
+        // FIT STAMP: Prompt for Fitter ID
+        .alert("Enter Fitter ID", isPresented: $viewModel.showFitterIDAlert) {
+            TextField("Fitter ID", text: $tempFitterID)
+            Button("Cancel", role: .cancel) {
+                viewModel.pendingStampPoint = nil
+                tempFitterID = ""
+            }
+            Button("Save & Stamp") {
+                viewModel.setFitterIDAndStamp(tempFitterID)
+                tempFitterID = ""
+            }
+        } message: {
+            Text("Please enter your Fitter ID to continue.")
+        }
+        // QC STAMP: Prompt for Inspector Name
+        .alert("Enter Inspector Name", isPresented: $viewModel.showInspectorNameAlert) {
+            TextField("Inspector Name", text: $tempInspectorName)
+            Button("Cancel", role: .cancel) {
+                viewModel.pendingStampPoint = nil
+                tempInspectorName = ""
+            }
+            Button("Next") {
+                viewModel.setInspectorNameAndContinue(tempInspectorName)
+                tempInspectorName = ""
+            }
+        } message: {
+            Text("Please enter your name for the QC log.")
+        }
+        // QC STAMP: Prompt for Piece Fitter ID (Always asks)
+        .alert("Enter Fitter ID", isPresented: $viewModel.showQCFitterIDAlert) {
+            TextField("Fitter ID", text: $tempFitterID)
+            Button("Cancel", role: .cancel) {
+                viewModel.pendingStampPoint = nil
+                tempFitterID = ""
+            }
+            Button("Stamp") {
+                viewModel.setQCFitterIDAndStamp(tempFitterID)
+                tempFitterID = ""
+            }
+        } message: {
+            Text("Enter the ID of the fitter who worked on this piece.")
         }
         .sheet(isPresented: $showCustomStampSheet) {
             CustomStampCreatorView(
@@ -917,6 +963,18 @@ class PDFViewerViewModel: ObservableObject {
         .text: .defaultText
     ]
 
+    // MARK: - Dynamic Stamp Settings & State
+    @AppStorage("FitterID") var fitterID: String = ""
+    @AppStorage("InspectorName") var inspectorName: String = ""
+
+    @Published var showFitterIDAlert = false
+    @Published var showInspectorNameAlert = false
+    @Published var showQCFitterIDAlert = false
+
+    // Temporary storage for tap location while alerts are shown
+    var pendingStampPoint: CGPoint? = nil
+    var pendingPDFView: PDFView? = nil
+
     // Computed properties for current tool's settings (used by UI bindings)
     var selectedColor: DrawingColor {
         get { toolSettings[selectedTool]?.color ?? .black }
@@ -1068,6 +1126,32 @@ class PDFViewerViewModel: ObservableObject {
         guard selectedTool == .stamp else { return }
         guard let page = pdfView.page(for: screenPoint, nearest: true) else { return }
 
+        // Handle Dynamic Stamps
+        if selectedCustomStamp == nil {
+            if selectedStampType == .fit {
+                pendingStampPoint = screenPoint
+                pendingPDFView = pdfView
+
+                if fitterID.isEmpty {
+                    showFitterIDAlert = true
+                } else {
+                    executeFitStamp()
+                }
+                return
+            } else if selectedStampType == .qcFit {
+                pendingStampPoint = screenPoint
+                pendingPDFView = pdfView
+
+                if inspectorName.isEmpty {
+                    showInspectorNameAlert = true
+                } else {
+                    // QC always asks for Fitter ID for that specific piece
+                    showQCFitterIDAlert = true
+                }
+                return
+            }
+        }
+
         let annotation: PDFAnnotation?
 
         // Check if a custom stamp is selected
@@ -1093,6 +1177,73 @@ class PDFViewerViewModel: ObservableObject {
             currentFile.localStatus = .stamped
             canUndo = historyManager.canUndo
         }
+    }
+
+    // MARK: - Dynamic Stamp Logic
+
+    func setFitterIDAndStamp(_ id: String) {
+        guard !id.isEmpty else { return }
+        fitterID = id // Save to settings
+        executeFitStamp()
+    }
+
+    private func executeFitStamp() {
+        guard let point = pendingStampPoint,
+              let pdfView = pendingPDFView,
+              let page = pdfView.page(for: point, nearest: true) else { return }
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MM/dd/yyyy HH:mm"
+        let dateStr = formatter.string(from: Date())
+
+        let text = "Fit \(fitterID) \(dateStr)"
+
+        if let annotation = PDFAnnotationHelper.addDynamicStamp(to: page, at: point, in: pdfView, text: text) {
+            historyManager.recordAnnotation(annotation, on: page)
+            hasUnsavedChanges = true
+            currentFile.localStatus = .stamped
+            canUndo = historyManager.canUndo
+        }
+
+        // Reset pending
+        pendingStampPoint = nil
+        pendingPDFView = nil
+    }
+
+    func setInspectorNameAndContinue(_ name: String) {
+        guard !name.isEmpty else { return }
+        inspectorName = name // Save to settings
+
+        // Proceed to ask for Fitter ID
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            self.showQCFitterIDAlert = true
+        }
+    }
+
+    func setQCFitterIDAndStamp(_ qcFitterID: String) {
+        guard !qcFitterID.isEmpty else { return }
+
+        guard let point = pendingStampPoint,
+              let pdfView = pendingPDFView,
+              let page = pdfView.page(for: point, nearest: true) else { return }
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MM/dd/yyyy HH:mm"
+        let dateStr = formatter.string(from: Date())
+
+        // Format: "QC Fit | QC: David Brannon | Fit: AA | 12/16/2025 14:50"
+        let text = "QC Fit | QC: \(inspectorName) | Fit: \(qcFitterID) | \(dateStr)"
+
+        if let annotation = PDFAnnotationHelper.addDynamicStamp(to: page, at: point, in: pdfView, text: text) {
+            historyManager.recordAnnotation(annotation, on: page)
+            hasUnsavedChanges = true
+            currentFile.localStatus = .stamped
+            canUndo = historyManager.canUndo
+        }
+
+        // Reset
+        pendingStampPoint = nil
+        pendingPDFView = nil
     }
 
     /// Handle text input from alert
