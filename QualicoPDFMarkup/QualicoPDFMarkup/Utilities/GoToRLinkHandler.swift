@@ -36,8 +36,10 @@ class GoToRLinkHandler {
         // Method 1: Check annotation's action object
         if let action = annotation.action {
             // Try PDFActionRemoteGoTo (if available in this iOS version)
+            // Note: Use KVC to safely access url - the Swift interface declares it non-optional
+            // but the underlying Objective-C can return nil, causing a bridging crash
             if let remoteAction = action as? PDFActionRemoteGoTo,
-               let url = remoteAction.url {
+               let url = remoteAction.value(forKey: "url") as? URL {
                 return url.lastPathComponent
             }
         }
