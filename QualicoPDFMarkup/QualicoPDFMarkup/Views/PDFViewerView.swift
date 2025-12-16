@@ -568,8 +568,16 @@ struct PDFKitView: UIViewRepresentable {
                             onGoToRLinkTapped?(targetFilename)
                             return
                         } else {
-                            // Debug: Print keys if we hit a link but couldn't extract filename
-                            print("⚠️ Hit link but extraction failed. Keys: \(hitAnnotation.annotationKeyValues.keys)")
+                            // CRITICAL DEBUG: Dump all annotation data to understand why extraction failed
+                            print("⚠️ EXTRACTION FAILED - Dumping full annotation data:")
+                            GoToRLinkHandler.dumpAnnotationData(hitAnnotation)
+                            print("⚠️ Available Keys: \(hitAnnotation.annotationKeyValues.keys)")
+                            if let action = hitAnnotation.action {
+                                print("⚠️ ACTION DESC: \(String(describing: action))")
+                                print("⚠️ ACTION TYPE: \(type(of: action))")
+                            } else {
+                                print("⚠️ ACTION: nil (no action object present)")
+                            }
                         }
 
                         // For standard links, let PDFKit handle them
