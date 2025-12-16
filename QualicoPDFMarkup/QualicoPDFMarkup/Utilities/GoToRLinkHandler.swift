@@ -56,14 +56,13 @@ class GoToRLinkHandler {
             return
         }
 
-        let pageCount = CGPDFDocumentGetNumberOfPages(cgDocument)
+        let pageCount = cgDocument.numberOfPages
         print("📚 CGPDFDocument: Scanning \(pageCount) pages for GoToR links...")
 
         for pageIndex in 1...pageCount {
-            guard let cgPage = CGPDFDocumentGetPage(cgDocument, pageIndex) else { continue }
+            guard let cgPage = cgDocument.page(at: pageIndex) else { continue }
 
-            let pageDictionary = CGPDFPageGetDictionary(cgPage)
-            guard let pageDictionary = pageDictionary else { continue }
+            guard let pageDictionary = cgPage.dictionary else { continue }
 
             // Get Annots array from page
             var annotsArray: CGPDFArrayRef?
