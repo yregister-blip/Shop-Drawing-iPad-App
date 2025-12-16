@@ -723,7 +723,7 @@ class HyperlinkOverlayView: UIView {
             // Check each annotation on the page
             for annotation in page.annotations {
                 // Only highlight Link and Widget annotations
-                guard annotation.type == PDFAnnotationSubtype.link || annotation.type == PDFAnnotationSubtype.widget else { continue }
+                guard annotation.type == PDFAnnotationSubtype.link.rawValue || annotation.type == PDFAnnotationSubtype.widget.rawValue else { continue }
 
                 // Convert annotation bounds to view coordinates
                 let pageRect = annotation.bounds
@@ -1247,7 +1247,7 @@ class PDFViewerViewModel: ObservableObject {
 
             for annotation in page.annotations {
                 // Check for Link annotations
-                if annotation.type == PDFAnnotationSubtype.link {
+                if annotation.type == PDFAnnotationSubtype.link.rawValue {
                     linkCount += 1
                     print("")
                     print("🔗 Link #\(linkCount) on Page \(pageIndex + 1)")
@@ -1295,7 +1295,7 @@ class PDFViewerViewModel: ObservableObject {
                 }
 
                 // Also check for Widget annotations (Bluebeam sometimes uses these)
-                if annotation.type == PDFAnnotationSubtype.widget {
+                if annotation.type == PDFAnnotationSubtype.widget.rawValue {
                     print("")
                     print("📦 Widget found on Page \(pageIndex + 1)")
                     print("   Bounds: \(annotation.bounds)")
