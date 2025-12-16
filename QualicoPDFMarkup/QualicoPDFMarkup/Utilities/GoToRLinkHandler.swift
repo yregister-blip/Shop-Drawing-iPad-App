@@ -289,13 +289,10 @@ class GoToRLinkHandler {
                         }
 
                         // Create the native action
-                        if let action = PDFActionRemoteGoTo(pageIndex: destPageIndex, at: CGPoint.zero, fileURL: url) {
-                            annotation.action = action
-                            fixedCount += 1
-                            print("   ✅ Created PDFActionRemoteGoTo for: \(targetFilename)")
-                        } else {
-                            print("   ⚠️ Failed to create PDFActionRemoteGoTo for: \(targetFilename)")
-                        }
+                        let action = PDFActionRemoteGoTo(pageIndex: destPageIndex, at: CGPoint.zero, fileURL: url)
+                        annotation.action = action
+                        fixedCount += 1
+                        print("   ✅ Created PDFActionRemoteGoTo for: \(targetFilename)")
                     }
                 }
             }
