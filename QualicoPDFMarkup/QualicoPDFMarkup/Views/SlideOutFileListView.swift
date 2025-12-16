@@ -16,8 +16,19 @@ struct SlideOutFileListView: View {
     let onCloseViewer: () -> Void
 
     @State private var dragOffset: CGFloat = 0
+    @State private var searchText = ""
 
     private let panelWidth: CGFloat = 320
+
+    // Filtered files based on search text
+    private var filteredFiles: [DriveItem] {
+        if searchText.isEmpty {
+            return files
+        }
+        return files.filter { file in
+            file.name.localizedCaseInsensitiveContains(searchText)
+        }
+    }
 
     var body: some View {
         GeometryReader { geometry in
@@ -60,30 +71,71 @@ struct SlideOutFileListView: View {
                         .padding(.vertical, 12)
                         .background(Color(UIColor.secondarySystemBackground))
 
+                        // Search field
+                        HStack {
+                            Image(systemName: "magnifyingglass")
+                                .foregroundColor(.secondary)
+                            TextField("Search files", text: $searchText)
+                                .textFieldStyle(.plain)
+                                .autocorrectionDisabled()
+                            if !searchText.isEmpty {
+                                Button(action: { searchText = "" }) {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                        }
+                        .padding(10)
+                        .background(Color(UIColor.tertiarySystemBackground))
+                        .cornerRadius(10)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+
                         Divider()
 
                         // File list
                         ScrollViewReader { proxy in
-                            List {
-                                ForEach(files) { file in
-                                    SlideOutFileRowView(
-                                        file: file,
-                                        isSelected: file.id == currentFileId,
-                                        graphService: graphService,
-                                        onTap: {
-                                            onFileSelected(file)
-                                            withAnimation(.easeInOut(duration: 0.25)) {
-                                                isShowing = false
-                                            }
-                                        }
-                                    )
-                                    .id(file.id)
+                            if filteredFiles.isEmpty && !searchText.isEmpty {
+                                // Empty state for search
+                                VStack(spacing: 12) {
+                                    Spacer()
+                                    Image(systemName: "doc.text.magnifyingglass")
+                                        .font(.system(size: 40))
+                                        .foregroundColor(.secondary)
+                                    Text("No results found")
+                                        .font(.headline)
+                                        .foregroundColor(.secondary)
+                                    Text("No files match '\(searchText)'")
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                    Spacer()
                                 }
-                            }
-                            .listStyle(.plain)
-                            .onAppear {
-                                // Scroll to current file
-                                proxy.scrollTo(currentFileId, anchor: .center)
+                                .frame(maxWidth: .infinity)
+                            } else {
+                                List {
+                                    ForEach(filteredFiles) { file in
+                                        SlideOutFileRowView(
+                                            file: file,
+                                            isSelected: file.id == currentFileId,
+                                            graphService: graphService,
+                                            onTap: {
+                                                onFileSelected(file)
+                                                searchText = ""  // Clear search when selecting
+                                                withAnimation(.easeInOut(duration: 0.25)) {
+                                                    isShowing = false
+                                                }
+                                            }
+                                        )
+                                        .id(file.id)
+                                    }
+                                }
+                                .listStyle(.plain)
+                                .onAppear {
+                                    // Scroll to current file (only when not searching)
+                                    if searchText.isEmpty {
+                                        proxy.scrollTo(currentFileId, anchor: .center)
+                                    }
+                                }
                             }
                         }
 
