@@ -540,15 +540,24 @@ struct PDFKitView: UIViewRepresentable {
             guard let pdfView = pdfView else { return }
             let point = gesture.location(in: pdfView)
 
-            // IMPROVED LINK DETECTION using PDFKit's native hit testing
-            // Use nearest: true to help with fat-finger tapping on link areas
+            // MANUAL HIT TEST - PDFKit's page.annotation(at:) often ignores invisible/borderless links
+            // that Bluebeam creates as "hotspots". We manually iterate all annotations to find matches.
             if let page = pdfView.page(for: point, nearest: true) {
                 let pagePoint = pdfView.convert(point, to: page)
 
-                // Use PDFKit's native hit testing
-                if let hitAnnotation = page.annotation(at: pagePoint) {
+                // Manually iterate all annotations to find one that contains the tap point
+                let hitAnnotation = page.annotations.first { annotation in
+                    // Check bounds with a small buffer for fat fingers
+                    let hitRect = annotation.bounds.insetBy(dx: -5, dy: -5)
+                    guard hitRect.contains(pagePoint) else { return false }
+
+                    // We only care about Links or Widgets (Bluebeam often uses Widgets)
+                    return annotation.type == "Link" || annotation.type == "Widget"
+                }
+
+                if let hitAnnotation = hitAnnotation {
                     // Debug Log: See exactly what we are tapping
-                    print("👇 Tapped Annotation: Type=\(hitAnnotation.type ?? "nil")")
+                    print("👇 Tapped Annotation (Manual Hit): Type=\(hitAnnotation.type ?? "nil")")
 
                     // Check for Link OR Widget (Bluebeam sometimes uses Widgets for complex links)
                     if hitAnnotation.type == "Link" || hitAnnotation.type == "Widget" {
@@ -558,6 +567,9 @@ struct PDFKitView: UIViewRepresentable {
                             // Call the callback to handle navigation
                             onGoToRLinkTapped?(targetFilename)
                             return
+                        } else {
+                            // Debug: Print keys if we hit a link but couldn't extract filename
+                            print("⚠️ Hit link but extraction failed. Keys: \(hitAnnotation.annotationKeyValues.keys)")
                         }
 
                         // For standard links, let PDFKit handle them
@@ -724,6 +736,7 @@ class HyperlinkOverlayView: UIView {
         self.pdfView = pdfView
         super.init(frame: pdfView.bounds)
         backgroundColor = .clear
+        isUserInteractionEnabled = false // Ensure touches pass through
     }
 
     required init?(coder: NSCoder) {
@@ -735,29 +748,35 @@ class HyperlinkOverlayView: UIView {
               let document = pdfView.document,
               let context = UIGraphicsGetCurrentContext() else { return }
 
-        // Get visible pages
-        let visibleRect = pdfView.bounds
-
+        // Iterate all pages (drawing outside bounds is clipped anyway)
         for pageIndex in 0..<document.pageCount {
             guard let page = document.page(at: pageIndex) else { continue }
 
+            // DEBUG: Draw a faint yellow border around the page content to prove overlay is active
+            let pageBox = pdfView.convert(page.bounds(for: .cropBox), from: page)
+            if pageBox.intersects(rect) {
+                context.setStrokeColor(UIColor.yellow.withAlphaComponent(0.5).cgColor)
+                context.setLineWidth(5)
+                context.stroke(pageBox)
+            }
+
             // Check each annotation on the page
             for annotation in page.annotations {
-                // Only highlight Link and Widget annotations
-                guard annotation.type == PDFAnnotationSubtype.link.rawValue || annotation.type == PDFAnnotationSubtype.widget.rawValue else { continue }
+                // Filter for Link or Widget
+                let type = annotation.type ?? ""
+                guard type == "Link" || type == "Widget" else { continue }
 
                 // Convert annotation bounds to view coordinates
                 let pageRect = annotation.bounds
                 let viewRect = pdfView.convert(pageRect, from: page)
 
                 // Only draw if visible
-                guard viewRect.intersects(visibleRect) else { continue }
+                guard viewRect.intersects(rect) else { continue }
 
-                // Use GoToRLinkHandler to check for ANY destination (including GoToR links)
+                // Determine color based on link type
+                let filename = GoToRLinkHandler.extractTargetFilename(from: annotation)
+                let isGoToRLink = filename != nil
                 let hasDestination = GoToRLinkHandler.hasAnyDestination(annotation)
-
-                // Check if it's a GoToR link specifically (blue highlight)
-                let isGoToRLink = GoToRLinkHandler.hasGoToRAction(annotation)
 
                 if isGoToRLink {
                     // Blue for GoToR (external file) links
@@ -768,8 +787,8 @@ class HyperlinkOverlayView: UIView {
                     context.setFillColor(UIColor.systemGreen.withAlphaComponent(0.3).cgColor)
                     context.setStrokeColor(UIColor.systemGreen.cgColor)
                 } else {
-                    // Red for broken links (no destination)
-                    context.setFillColor(UIColor.systemRed.withAlphaComponent(0.3).cgColor)
+                    // Red for broken/unknown links
+                    context.setFillColor(UIColor.systemRed.withAlphaComponent(0.2).cgColor)
                     context.setStrokeColor(UIColor.systemRed.cgColor)
                 }
 
@@ -778,6 +797,24 @@ class HyperlinkOverlayView: UIView {
                 // Draw filled rectangle with border
                 context.fill(viewRect)
                 context.stroke(viewRect)
+
+                // Draw Label if GoToR link
+                if let fname = filename {
+                    let text = fname as NSString
+                    let attr: [NSAttributedString.Key: Any] = [
+                        .font: UIFont.systemFont(ofSize: 10, weight: .bold),
+                        .foregroundColor: UIColor.black,
+                        .backgroundColor: UIColor.white.withAlphaComponent(0.8)
+                    ]
+                    let textSize = text.size(withAttributes: attr)
+                    let textRect = CGRect(
+                        x: viewRect.midX - textSize.width / 2,
+                        y: viewRect.midY - textSize.height / 2,
+                        width: textSize.width,
+                        height: textSize.height
+                    )
+                    text.draw(in: textRect, withAttributes: attr)
+                }
 
                 // Add a small indicator in the corner
                 let indicatorSize: CGFloat = 12

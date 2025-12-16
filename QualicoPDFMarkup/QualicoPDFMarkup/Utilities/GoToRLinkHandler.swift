@@ -32,8 +32,9 @@ class GoToRLinkHandler {
 
     /// Extracts the target filename from a GoToR link annotation
     /// Returns nil if this is not a GoToR link or if extraction fails
+    /// Uses brute-force dictionary parsing to handle various key formats
     static func extractTargetFilename(from annotation: PDFAnnotation) -> String? {
-        // Method 1: Check annotation's action object
+        // Method 1: Check annotation's native action object (fastest path)
         if let action = annotation.action {
             // Try PDFActionRemoteGoTo (if available in this iOS version)
             // Note: PDFActionRemoteGoTo.url can crash due to nil NSURL bridging,
@@ -47,30 +48,51 @@ class GoToRLinkHandler {
             }
         }
 
-        // Method 2: Parse the raw annotation dictionary
-        // GoToR actions store the file reference in the /A dictionary with /S /GoToR
-        if let annotDict = annotation.value(forAnnotationKey: PDFAnnotationKey(rawValue: "/A")) {
-            return extractFilenameFromActionDict(annotDict)
-        }
+        // Method 2: BRUTE FORCE Dictionary Parsing
+        // We iterate the raw [AnyHashable: Any] dictionary to find the /A (Action) entry,
+        // handling both String and PDFAnnotationKey key types
+        let keys = annotation.annotationKeyValues
+        var actionDict: [AnyHashable: Any]?
 
-        // Method 3: Try getting the action dictionary directly via annotationKeyValues
-        // The action may be embedded or referenced
-        if let keyValues = annotation.annotationKeyValues as? [PDFAnnotationKey: Any] {
-            for (key, value) in keyValues {
-                if key.rawValue == "/A" || key.rawValue == "A" {
-                    if let filename = extractFilenameFromActionDict(value) {
-                        return filename
-                    }
-                }
+        // Find the action dictionary (key could be "/A", "A", or PDFAnnotationKey("/A"))
+        for (key, value) in keys {
+            // Clean up the key string (remove quotes from debug description)
+            let keyString = String(describing: key).replacingOccurrences(of: "\"", with: "")
+            if keyString == "/A" || keyString == "A" || keyString.hasSuffix("A") {
+                actionDict = value as? [AnyHashable: Any]
+                break
             }
         }
 
-        // Method 4: Check if there's a direct file specification
+        if let actionDict = actionDict {
+            if let filename = extractFilenameFromActionDict(actionDict) {
+                return filename
+            }
+        }
+
+        // Method 3: Try value(forAnnotationKey:) with explicit key
+        if let annotDict = annotation.value(forAnnotationKey: PDFAnnotationKey(rawValue: "/A")) {
+            if let filename = extractFilenameFromActionDict(annotDict) {
+                return filename
+            }
+        }
+
+        // Method 4: Check if there's a direct file specification at the annotation level
         if let fileSpec = annotation.value(forAnnotationKey: PDFAnnotationKey(rawValue: "/F")) {
             return extractFilenameFromFileSpec(fileSpec)
         }
 
-        // Method 5: Try to access via action property paths (with safe KVC)
+        // Method 5: Brute force check for /F in annotation keys
+        for (key, value) in keys {
+            let keyString = String(describing: key).replacingOccurrences(of: "\"", with: "")
+            if keyString == "/F" || keyString == "F" || keyString == "/File" || keyString == "File" {
+                if let filename = extractFilenameFromFileSpec(value) {
+                    return filename
+                }
+            }
+        }
+
+        // Method 6: Try to access via action property paths (with safe KVC)
         if let action = annotation.action {
             // Use KVC to try to get file-related properties (safely)
             if action.responds(to: Selector(("URL"))) {
@@ -88,34 +110,33 @@ class GoToRLinkHandler {
         return nil
     }
 
-    /// Extracts filename from an action dictionary
+    /// Extracts filename from an action dictionary (handles various dictionary types)
     private static func extractFilenameFromActionDict(_ actionDict: Any) -> String? {
-        // If it's a dictionary, look for /F (FileSpec) or /File
-        if let dict = actionDict as? [String: Any] {
-            // Check for /S /GoToR first to confirm it's a remote goto action
-            if let actionType = dict["S"] as? String, actionType != "/GoToR" && actionType != "GoToR" {
-                return nil
-            }
+        // Handle various dictionary types (Swift dictionary or NSDictionary)
+        guard let dict = actionDict as? [AnyHashable: Any] else { return nil }
 
-            // Look for /F (file specification)
-            if let fileSpec = dict["F"] {
-                return extractFilenameFromFileSpec(fileSpec)
-            }
-
-            // Some PDFs use /File instead of /F
-            if let fileSpec = dict["File"] {
-                return extractFilenameFromFileSpec(fileSpec)
+        // First, check if this is indeed a GoToR action by looking for /S key
+        var isGoToR = false
+        for (key, value) in dict {
+            let keyStr = String(describing: key).replacingOccurrences(of: "\"", with: "")
+            if keyStr == "/S" || keyStr == "S" {
+                let valStr = String(describing: value)
+                if valStr.contains("GoToR") {
+                    isGoToR = true
+                    break
+                }
             }
         }
 
-        // If it's a PDFKit dictionary representation
-        if let dict = actionDict as? [AnyHashable: Any] {
-            for (key, value) in dict {
-                let keyStr = String(describing: key)
-                if keyStr.contains("F") || keyStr.contains("File") {
-                    if let filename = extractFilenameFromFileSpec(value) {
-                        return filename
-                    }
+        // Proceed even if /S isn't explicitly found, as some incomplete dicts might just have /F
+
+        // Look for /F or /File keys
+        for (key, value) in dict {
+            let keyStr = String(describing: key).replacingOccurrences(of: "\"", with: "")
+            // The file spec is usually under /F or /File
+            if keyStr == "/F" || keyStr == "F" || keyStr == "/File" || keyStr == "File" {
+                if let filename = extractFilenameFromFileSpec(value) {
+                    return filename
                 }
             }
         }
@@ -125,31 +146,40 @@ class GoToRLinkHandler {
 
     /// Extracts filename from a file specification object
     private static func extractFilenameFromFileSpec(_ fileSpec: Any) -> String? {
-        // FileSpec can be a simple string (filename)
+        // Case A: Simple String
         if let filename = fileSpec as? String {
-            return filename
+            return filename.replacingOccurrences(of: "file://", with: "")
         }
 
-        // Or a dictionary with /F and /UF keys
+        // Case B: Dictionary (Full FileSpec)
+        if let dict = fileSpec as? [AnyHashable: Any] {
+            // Priority: /UF (Unicode), then /F (ASCII)
+            let targetKeys = ["/UF", "UF", "/F", "F"]
+            for targetKey in targetKeys {
+                for (key, value) in dict {
+                    let keyStr = String(describing: key).replacingOccurrences(of: "\"", with: "")
+                    if keyStr == targetKey, let filename = value as? String {
+                        return filename.replacingOccurrences(of: "file://", with: "")
+                    }
+                }
+            }
+        }
+
+        // Case C: Try String dictionary
         if let dict = fileSpec as? [String: Any] {
             // /UF is Unicode filename (preferred)
             if let uf = dict["UF"] as? String {
-                return uf
+                return uf.replacingOccurrences(of: "file://", with: "")
+            }
+            if let uf = dict["/UF"] as? String {
+                return uf.replacingOccurrences(of: "file://", with: "")
             }
             // /F is ASCII filename
             if let f = dict["F"] as? String {
-                return f
+                return f.replacingOccurrences(of: "file://", with: "")
             }
-        }
-
-        if let dict = fileSpec as? [AnyHashable: Any] {
-            for (key, value) in dict {
-                let keyStr = String(describing: key)
-                if keyStr.contains("UF") || keyStr == "F" || keyStr == "/F" {
-                    if let str = value as? String {
-                        return str
-                    }
-                }
+            if let f = dict["/F"] as? String {
+                return f.replacingOccurrences(of: "file://", with: "")
             }
         }
 
@@ -247,6 +277,7 @@ class GoToRLinkHandler {
     /// Scans for Bluebeam GoToR links and forces them into native PDFActionRemoteGoTo objects.
     /// This is aggressive - if we find a filename in the dictionary, we verify the existing action
     /// actually points to it. If not (or if the action is empty/broken), we replace it.
+    /// Uses brute-force dictionary iteration to handle various key formats.
     /// Returns the number of links fixed.
     @discardableResult
     static func fixBrokenBluebeamLinks(in document: PDFDocument) -> Int {
@@ -259,18 +290,42 @@ class GoToRLinkHandler {
                 // We only care about Links or Widgets
                 guard annotation.type == "Link" || annotation.type == "Widget" else { continue }
 
-                // 1. Try to find the target filename from the raw dictionary (Method 2, 3, 4)
-                // We intentionally skip Method 1 (checking the Action) here because we want to know
-                // what the dictionary *says* the file is, not what PDFKit *thinks* it is.
+                // 1. Try to find the target filename from the raw dictionary
+                // We use brute-force iteration to handle various key formats
                 var targetFilename: String?
+                let keys = annotation.annotationKeyValues
 
-                // Check /A dictionary directly
-                if let annotDict = annotation.value(forAnnotationKey: PDFAnnotationKey(rawValue: "/A")) {
+                // Check /A dictionary using brute-force key matching
+                for (key, value) in keys {
+                    let keyString = String(describing: key).replacingOccurrences(of: "\"", with: "")
+                    if keyString == "/A" || keyString == "A" || keyString.hasSuffix("A") {
+                        if let actionDict = value as? [AnyHashable: Any] {
+                            targetFilename = extractFilenameFromActionDict(actionDict)
+                            break
+                        }
+                    }
+                }
+
+                // Also try the standard way
+                if targetFilename == nil,
+                   let annotDict = annotation.value(forAnnotationKey: PDFAnnotationKey(rawValue: "/A")) {
                     targetFilename = extractFilenameFromActionDict(annotDict)
                 }
 
-                // If not found, check /F directly
-                if targetFilename == nil, let fileSpec = annotation.value(forAnnotationKey: PDFAnnotationKey(rawValue: "/F")) {
+                // If not found, check /F directly using brute-force
+                if targetFilename == nil {
+                    for (key, value) in keys {
+                        let keyString = String(describing: key).replacingOccurrences(of: "\"", with: "")
+                        if keyString == "/F" || keyString == "F" || keyString == "/File" || keyString == "File" {
+                            targetFilename = extractFilenameFromFileSpec(value)
+                            break
+                        }
+                    }
+                }
+
+                // Also try standard way for /F
+                if targetFilename == nil,
+                   let fileSpec = annotation.value(forAnnotationKey: PDFAnnotationKey(rawValue: "/F")) {
                     targetFilename = extractFilenameFromFileSpec(fileSpec)
                 }
 
@@ -299,12 +354,23 @@ class GoToRLinkHandler {
                         // which PDFActionRemoteGoTo requires.
                         let url = URL(fileURLWithPath: foundFilename)
 
-                        // Extract destination page if available from the raw dictionary
+                        // Extract destination page if available from the raw dictionary (brute-force)
                         var destPageIndex = 0
-                        if let actionDict = annotation.value(forAnnotationKey: PDFAnnotationKey(rawValue: "/A")) as? [String: Any],
-                           let dest = actionDict["D"] as? [Any],
-                           let pageNum = dest.first as? Int {
-                            destPageIndex = pageNum
+                        for (key, value) in keys {
+                            let keyString = String(describing: key).replacingOccurrences(of: "\"", with: "")
+                            if keyString == "/A" || keyString == "A" || keyString.hasSuffix("A") {
+                                if let actionDict = value as? [AnyHashable: Any] {
+                                    for (aKey, aValue) in actionDict {
+                                        let aKeyStr = String(describing: aKey).replacingOccurrences(of: "\"", with: "")
+                                        if aKeyStr == "/D" || aKeyStr == "D" {
+                                            if let dest = aValue as? [Any], let pageNum = dest.first as? Int {
+                                                destPageIndex = pageNum
+                                            }
+                                        }
+                                    }
+                                }
+                                break
+                            }
                         }
 
                         // Force overwrite the action
