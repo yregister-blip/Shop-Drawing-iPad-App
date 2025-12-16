@@ -736,7 +736,7 @@ class HyperlinkOverlayView: UIView {
         self.pdfView = pdfView
         super.init(frame: pdfView.bounds)
         backgroundColor = .clear
-        isUserInteractionEnabled = false // Ensure touches pass through
+        isUserInteractionEnabled = false
     }
 
     required init?(coder: NSCoder) {
@@ -748,121 +748,44 @@ class HyperlinkOverlayView: UIView {
               let document = pdfView.document,
               let context = UIGraphicsGetCurrentContext() else { return }
 
-        // Iterate all pages (drawing outside bounds is clipped anyway)
+        // Draw faint yellow border on pages to prove overlay is active
         for pageIndex in 0..<document.pageCount {
             guard let page = document.page(at: pageIndex) else { continue }
-
-            // DEBUG: Draw a faint yellow border around the page content to prove overlay is active
             let pageBox = pdfView.convert(page.bounds(for: .cropBox), from: page)
             if pageBox.intersects(rect) {
-                context.setStrokeColor(UIColor.yellow.withAlphaComponent(0.5).cgColor)
+                context.setStrokeColor(UIColor.yellow.withAlphaComponent(0.3).cgColor)
                 context.setLineWidth(5)
                 context.stroke(pageBox)
             }
 
-            // Check each annotation on the page
             for annotation in page.annotations {
-                // Filter for Link or Widget
-                let type = annotation.type ?? ""
-                guard type == "Link" || type == "Widget" else { continue }
+                guard annotation.type == "Link" || annotation.type == "Widget" else { continue }
 
-                // Convert annotation bounds to view coordinates
-                let pageRect = annotation.bounds
-                let viewRect = pdfView.convert(pageRect, from: page)
-
-                // Only draw if visible
+                let viewRect = pdfView.convert(annotation.bounds, from: page)
                 guard viewRect.intersects(rect) else { continue }
 
-                // Determine color based on link type
+                // Check brute-force filename extraction
                 let filename = GoToRLinkHandler.extractTargetFilename(from: annotation)
-                let isGoToRLink = filename != nil
-                let hasDestination = GoToRLinkHandler.hasAnyDestination(annotation)
+                let isGoToR = filename != nil
 
-                if isGoToRLink {
-                    // Blue for GoToR (external file) links
+                if isGoToR {
                     context.setFillColor(UIColor.systemBlue.withAlphaComponent(0.3).cgColor)
                     context.setStrokeColor(UIColor.systemBlue.cgColor)
-                } else if hasDestination {
-                    // Green for working links (URL or internal)
+                } else {
+                    // This was showing Green before, meaning it has an /A but extraction failed
                     context.setFillColor(UIColor.systemGreen.withAlphaComponent(0.3).cgColor)
                     context.setStrokeColor(UIColor.systemGreen.cgColor)
-                } else {
-                    // Red for broken/unknown links
-                    context.setFillColor(UIColor.systemRed.withAlphaComponent(0.2).cgColor)
-                    context.setStrokeColor(UIColor.systemRed.cgColor)
                 }
 
                 context.setLineWidth(2)
-
-                // Draw filled rectangle with border
                 context.fill(viewRect)
                 context.stroke(viewRect)
 
-                // Draw Label if GoToR link
+                // Label
                 if let fname = filename {
                     let text = fname as NSString
-                    let attr: [NSAttributedString.Key: Any] = [
-                        .font: UIFont.systemFont(ofSize: 10, weight: .bold),
-                        .foregroundColor: UIColor.black,
-                        .backgroundColor: UIColor.white.withAlphaComponent(0.8)
-                    ]
-                    let textSize = text.size(withAttributes: attr)
-                    let textRect = CGRect(
-                        x: viewRect.midX - textSize.width / 2,
-                        y: viewRect.midY - textSize.height / 2,
-                        width: textSize.width,
-                        height: textSize.height
-                    )
-                    text.draw(in: textRect, withAttributes: attr)
-                }
-
-                // Add a small indicator in the corner
-                let indicatorSize: CGFloat = 12
-                let indicatorRect = CGRect(
-                    x: viewRect.maxX - indicatorSize - 2,
-                    y: viewRect.minY + 2,
-                    width: indicatorSize,
-                    height: indicatorSize
-                )
-
-                if isGoToRLink {
-                    context.setFillColor(UIColor.systemBlue.cgColor)
-                } else if hasDestination {
-                    context.setFillColor(UIColor.systemGreen.cgColor)
-                } else {
-                    context.setFillColor(UIColor.systemRed.cgColor)
-                }
-                context.fillEllipse(in: indicatorRect)
-
-                // Draw icon indicator
-                context.setStrokeColor(UIColor.white.cgColor)
-                context.setLineWidth(1.5)
-
-                if isGoToRLink {
-                    // Arrow pointing right (external file)
-                    let arrowPath = UIBezierPath()
-                    arrowPath.move(to: CGPoint(x: indicatorRect.minX + 3, y: indicatorRect.midY))
-                    arrowPath.addLine(to: CGPoint(x: indicatorRect.maxX - 3, y: indicatorRect.midY))
-                    arrowPath.move(to: CGPoint(x: indicatorRect.maxX - 5, y: indicatorRect.midY - 3))
-                    arrowPath.addLine(to: CGPoint(x: indicatorRect.maxX - 3, y: indicatorRect.midY))
-                    arrowPath.addLine(to: CGPoint(x: indicatorRect.maxX - 5, y: indicatorRect.midY + 3))
-                    context.addPath(arrowPath.cgPath)
-                    context.strokePath()
-                } else if hasDestination {
-                    // Checkmark
-                    let checkPath = UIBezierPath()
-                    checkPath.move(to: CGPoint(x: indicatorRect.minX + 3, y: indicatorRect.midY))
-                    checkPath.addLine(to: CGPoint(x: indicatorRect.midX - 1, y: indicatorRect.maxY - 3))
-                    checkPath.addLine(to: CGPoint(x: indicatorRect.maxX - 3, y: indicatorRect.minY + 3))
-                    context.addPath(checkPath.cgPath)
-                    context.strokePath()
-                } else {
-                    // X mark
-                    context.move(to: CGPoint(x: indicatorRect.minX + 3, y: indicatorRect.minY + 3))
-                    context.addLine(to: CGPoint(x: indicatorRect.maxX - 3, y: indicatorRect.maxY - 3))
-                    context.move(to: CGPoint(x: indicatorRect.maxX - 3, y: indicatorRect.minY + 3))
-                    context.addLine(to: CGPoint(x: indicatorRect.minX + 3, y: indicatorRect.maxY - 3))
-                    context.strokePath()
+                    let attr: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 10), .foregroundColor: UIColor.black, .backgroundColor: UIColor.white.withAlphaComponent(0.7)]
+                    text.draw(at: CGPoint(x: viewRect.midX, y: viewRect.midY), withAttributes: attr)
                 }
             }
         }
