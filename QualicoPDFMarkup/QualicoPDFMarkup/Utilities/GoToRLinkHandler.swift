@@ -280,8 +280,8 @@ class GoToRLinkHandler {
                     // Check if the current action is already valid and points to this file
                     var needsRepair = true
 
-                    if let currentAction = annotation.action as? PDFActionRemoteGoTo,
-                       let currentURL = currentAction.url {
+                    if let currentAction = annotation.action as? PDFActionRemoteGoTo {
+                        let currentURL = currentAction.url
                         // If the existing action has a URL that matches our filename, it's fine.
                         // We check for suffix because foundFilename might be relative
                         if currentURL.absoluteString.hasSuffix(foundFilename) ||
